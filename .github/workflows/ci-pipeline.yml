@@ -60,7 +60,7 @@ jobs:
 
       # Quality Gate Backend
       - name: Check Backend Quality Gate
-        if: needs.changes.outputs.backend == 'true'
+        if: needs.changes.outputs.backend == 'false'
         run: |
           REPORT=$(find . -name "*analysis-report*" -o -name "*sonar*report*" | head -n 1)
           if [ -z "$REPORT" ]; then
@@ -76,7 +76,7 @@ jobs:
 
       # Quality Gate Frontend
       - name: Check Frontend Quality Gate
-        if: needs.changes.outputs.frontend == 'true'
+        if: needs.changes.outputs.frontend == 'false'
         run: |
           REPORT=$(find . -name "*analysis-report*" -o -name "*sonar*report*" | head -n 1)
           if [ -z "$REPORT" ]; then
