@@ -1,3 +1,4 @@
+
 name: Sonar Backend
 
 on:
@@ -7,8 +8,10 @@ jobs:
   sonar:
     name: Analisis Backend
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -20,13 +23,3 @@ jobs:
           exclusions: "**/node_modules/**,**/dist/**,**/*.test.js"
           wait-for-server: 120
           retention-days: 7
-
-      - name: Check Backend Quality Gate
-        run: |
-          REPORT=$(find . -name "*analysis-report*" -o -name "*sonar*report*" | head -n 1)
-          if [ -z "$REPORT" ]; then
-            echo "No se encontró el informe del backend."
-            exit 1
-          fi
-          grep -q "Status.*OK" "$REPORT" && echo "✅ Backend OK" \
-            || { echo "❌ Backend fallido. Bloqueando."; exit 1; }

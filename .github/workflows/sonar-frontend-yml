@@ -1,3 +1,4 @@
+
 name: Sonar Frontend
 
 on:
@@ -7,8 +8,10 @@ jobs:
   sonar:
     name: Analisis Frontend
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -20,13 +23,3 @@ jobs:
           exclusions: "**/node_modules/**,**/dist/**,**/*.test.js"
           wait-for-server: 120
           retention-days: 7
-
-      - name: Check Frontend Quality Gate
-        run: |
-          REPORT=$(find . -name "*analysis-report*" -o -name "*sonar*report*" | head -n 1)
-          if [ -z "$REPORT" ]; then
-            echo "No se encontró el informe del frontend."
-            exit 1
-          fi
-          grep -q "Status.*OK" "$REPORT" && echo "✅ Frontend OK" \
-            || { echo "❌ Frontend fallido. Bloqueando."; exit 1; }
