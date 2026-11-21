@@ -1,0 +1,22 @@
+name: Sonar Analysis (Orquestador)
+
+on:
+  workflow_call:
+    inputs:
+      backend_changed:
+        required: true
+        type: boolean
+      frontend_changed:
+        required: true
+        type: boolean
+
+jobs:
+  backend:
+    name: Sonar Backend
+    if: inputs.backend_changed == true
+    uses: ./.github/workflows/sonar-backend.yml
+
+  frontend:
+    name: Sonar Frontend
+    if: inputs.frontend_changed == true
+    uses: ./.github/workflows/sonar-frontend.yml

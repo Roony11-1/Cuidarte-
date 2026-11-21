@@ -7,85 +7,15 @@ on:
     branches: [main]
 
 jobs:
-  # 1) Detectar qué cambió
   changes:
     name: Detectar cambios
-    runs-on: ubuntu-latest
-    outputs:
-      backend: ${{ steps.filter.outputs.backend }}
-      frontend: ${{ steps.filter.outputs.frontend }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            backend:
-              - 'BACKEND/**'
-            frontend:
-              - 'FRONTEND/**'
+    uses: ./.github/workflows/changes.yml
 
-  # 2) SonarQube (solo si cambió BACKEND o FRONTEND)
   sonar:
     name: Analisis SonarQube
-    needs: changes
-    if: needs.changes.outputs.backend == 'false' || needs.changes.outputs.frontend == 'false'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      # Backend (solo si cambió BACKEND)
-      - name: Run Sonar Backend Analysis
-        if: needs.changes.outputs.backend == 'false'
-        uses: diekotto/sonar-scanner-analysis@v1
-        with:
-          project-key: cuidarteplus-backend
-          sources: ./BACKEND/src
-          exclusions: "**/node_modules/**,**/dist/**,**/*.test.js"
-          wait-for-server: 120
-          retention-days: 7
-
-      # Frontend (solo si cambió FRONTEND)
-      - name: Run Sonar Frontend Analysis
-        if: needs.changes.outputs.frontend == 'false'
-        uses: diekotto/sonar-scanner-analysis@v1
-        with:
-          project-key: cuidarteplus-frontend
-          sources: ./FRONTEND/src
-          exclusions: "**/node_modules/**,**/dist/**,**/*.test.js"
-          wait-for-server: 120
-          retention-days: 7
-
-      # Quality Gate Backend
-      - name: Check Backend Quality Gate
-        if: needs.changes.outputs.backend == 'false'
-        run: |
-          REPORT=$(find . -name "*analysis-report*" -o -name "*sonar*report*" | head -n 1)
-          if [ -z "$REPORT" ]; then
-            echo "No se encontró el informe del backend."
-            exit 1
-          fi
-          if grep -q "Status.*OK" "$REPORT"; then
-            echo "Quality Gate backend pasado."
-          else
-            echo "Quality Gate backend fallido. Bloqueando pipeline."
-            exit 1
-          fi
-
-      # Quality Gate Frontend
-      - name: Check Frontend Quality Gate
-        if: needs.changes.outputs.frontend == 'false'
-        run: |
-          REPORT=$(find . -name "*analysis-report*" -o -name "*sonar*report*" | head -n 1)
-          if [ -z "$REPORT" ]; then
-            echo "No se encontró el informe del frontend."
-            exit 1
-          fi
-          if grep -q "Status.*OK" "$REPORT"; then
-            echo "Quality Gate frontend pasado."
-          else
-            echo "Quality Gate frontend fallido. Bloqueando pipeline."
-            exit 1
-          fi
+    needs: [changes]
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+    uses: ./.github/workflows/sonar-analysis.yml
+    with:
+      backend_changed: ${{ needs.changes.outputs.backend == 'true' }}
+      frontend_changed: ${{ needs.changes.outputs.frontend == 'true' }}
