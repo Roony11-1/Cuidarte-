@@ -10,16 +10,64 @@ on:
 jobs:
   changes:
     name: Detectar cambios
-    uses: ./.github/workflows/changes.yml
+    runs-on: ubuntu-latest
+
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Detectar archivos modificados
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'BACKEND/**'
+            frontend:
+              - 'FRONTEND/**'
 
   sonar-backend:
     name: Analisis Backend
+    runs-on: ubuntu-latest
     needs: [changes]
     if: needs.changes.outputs.backend == 'true'
-    uses: ./.github/workflows/sonar-backend.yml
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Sonar Backend Analysis
+        uses: diekotto/sonar-scanner-analysis@v1
+        with:
+          project-key: cuidarteplus-backend
+          sources: ./BACKEND/src
+          exclusions: "**/node_modules/**,**/dist/**,**/*.test.js"
+          wait-for-server: 120
+          retention-days: 7
 
   sonar-frontend:
     name: Analisis Frontend
+    runs-on: ubuntu-latest
     needs: [changes]
     if: needs.changes.outputs.frontend == 'true'
-    uses: ./.github/workflows/sonar-frontend.yml
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Sonar Frontend Analysis
+        uses: diekotto/sonar-scanner-analysis@v1
+        with:
+          project-key: cuidarteplus-frontend
+          sources: ./FRONTEND/src
+          exclusions: "**/node_modules/**,**/dist/**,**/*.test.js"
+          wait-for-server: 120
+          retention-days: 7
