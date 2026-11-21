@@ -50,13 +50,21 @@ jobs:
           wait-for-server: 120
           retention-days: 7
 
+      - name: Download Backend Sonar Report
+        uses: actions/download-artifact@v4
+        with:
+          name: sonar-analysis-results
+          path: sonar-backend-report
+        continue-on-error: true
+
       - name: Check Backend Quality Gate
         run: |
-          REPORT=$(find . -name "*analysis-report*" -o -name "*sonar*report*" | head -n 1)
+          REPORT=$(find . sonar-backend-report -name "analysis_report.md" 2>/dev/null | head -n 1)
           if [ -z "$REPORT" ]; then
-            echo "No se encontró el informe del backend."
+            echo "No se encontró analysis_report.md del backend."
             exit 1
           fi
+          echo "Informe: $REPORT"
           grep -q "Status.*OK" "$REPORT" && echo "Backend OK" \
             || { echo "Backend fallido. Bloqueando."; exit 1; }
 
@@ -64,7 +72,10 @@ jobs:
     name: Analisis Frontend
     runs-on: ubuntu-latest
     needs: [changes, sonar-backend]
-    if: needs.changes.outputs.frontend == 'true'
+    if: |
+      always() &&
+      needs.changes.outputs.frontend == 'true' &&
+      (needs.sonar-backend.result == 'success' || needs.sonar-backend.result == 'skipped')
 
     steps:
       - name: Checkout repository
@@ -81,12 +92,20 @@ jobs:
           wait-for-server: 120
           retention-days: 7
 
+      - name: Download Frontend Sonar Report
+        uses: actions/download-artifact@v4
+        with:
+          name: sonar-analysis-results
+          path: sonar-frontend-report
+        continue-on-error: true
+
       - name: Check Frontend Quality Gate
         run: |
-          REPORT=$(find . -name "*analysis-report*" -o -name "*sonar*report*" | head -n 1)
+          REPORT=$(find . sonar-frontend-report -name "analysis_report.md" 2>/dev/null | head -n 1)
           if [ -z "$REPORT" ]; then
-            echo "No se encontró el informe del frontend."
+            echo "No se encontró analysis_report.md del frontend."
             exit 1
           fi
+          echo "Informe: $REPORT"
           grep -q "Status.*OK" "$REPORT" && echo "Frontend OK" \
             || { echo "Frontend fallido. Bloqueando."; exit 1; }
