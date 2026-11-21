@@ -11,11 +11,14 @@ jobs:
     name: Detectar cambios
     uses: ./.github/workflows/changes.yml
 
-  sonar:
-    name: Analisis SonarQube
+  sonar-backend:
+    name: Sonar Backend
     needs: [changes]
-    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
-    uses: ./.github/workflows/sonar-analysis.yml
-    with:
-      backend_changed: ${{ needs.changes.outputs.backend == 'true' }}
-      frontend_changed: ${{ needs.changes.outputs.frontend == 'true' }}
+    if: needs.changes.outputs.backend == 'true'
+    uses: ./.github/workflows/sonar-backend.yml
+
+  sonar-frontend:
+    name: Sonar Frontend
+    needs: [changes]
+    if: needs.changes.outputs.frontend == 'true'
+    uses: ./.github/workflows/sonar-frontend.yml
