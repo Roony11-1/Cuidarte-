@@ -12,13 +12,13 @@ jobs:
     uses: ./.github/workflows/changes.yml
 
   sonar-backend:
-    name: Sonar Backend
+    name: Analisis Backend
     needs: [changes]
     if: needs.changes.outputs.backend == 'true'
     uses: ./.github/workflows/sonar-backend.yml
 
   sonar-frontend:
-    name: Sonar Frontend
+    name: Analisis Frontend
     needs: [changes]
     if: needs.changes.outputs.frontend == 'true'
     uses: ./.github/workflows/sonar-frontend.yml
