@@ -18,7 +18,7 @@ public class ContraseñaEncriptadaTest extends BaseTest
     private final UsuarioDao usuarios = new UsuarioDao();
 
     @Test 
-    @Disabled("El test siempre fallara se desactiva para que pase el pipeline")
+    @Disabled("INC-DIN-01: bug conocido — contraseñas en texto plano. " + "Quitar @Disabled cuando el backend use bcrypt.")
     @DisplayName("AUT-PF-01 - Contraseñas deben almacenarse hasheadas con bcrypt")
     void contraseñaDeberiaEstarEncriptada()
     {
@@ -28,7 +28,8 @@ public class ContraseñaEncriptadaTest extends BaseTest
 
         Optional<Usuario> guardado = usuarios.findByNombreUsuario(user.usuario());
 
-        assertTrue(guardado.isPresent());
+        assertTrue(guardado.isPresent(),
+            "El usuario '" + user.usuario() + "' no se creó en la BD.");
 
         String contraseñaSupuestamenteHasheada = guardado.get().contraseña();
 
