@@ -1,6 +1,14 @@
-BACKEND/node_modules
-FRONTEND/node_modules
+BACKEND/node_modules/
+FRONTEND/node_modules/
 
+# Maven / Java
+**/target/
+**/*.class
+**/*.jar
+**/*.war
+**/*.ear
+**/.mvn/wrapper/maven-wrapper.jar
+
+# Environment
 .env
-
 !.env.example
