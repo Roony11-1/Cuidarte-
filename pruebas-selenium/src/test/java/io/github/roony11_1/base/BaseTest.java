@@ -10,6 +10,7 @@ import org.openqa.selenium.By;
 import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 
+import io.github.roony11_1.config.ConfigReader;
 import io.github.roony11_1.enviroment.config.DriverFactory;
 
 public abstract class BaseTest 
@@ -17,7 +18,9 @@ public abstract class BaseTest
     protected WebDriver driver;
     protected JavascriptExecutor jsExecutor;
 
-    protected static final String BASE_URL = "http://localhost:3333";
+    protected static final ConfigReader CONFIG = ConfigReader.getInstance();
+    protected static final String BASE_URL = CONFIG.app("base-url");
+    protected static final String API_URL  = CONFIG.app("api-url");
     protected static final String DEFAULT_PASSWORD = "123456";
 
     @BeforeEach 

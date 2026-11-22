@@ -1,0 +1,18 @@
+app:
+  base-url: ${BASE_URL:-http://localhost:3333}
+  api-url: ${API_URL:-http://localhost:4444}
+
+db:
+  host: ${DB_HOST:-localhost}
+  port: ${DB_PORT:-15442}
+  name: ${DB_NAME:-cuidarteplus}
+  user: ${DB_USER:-postgres}
+  password: ${DB_PASSWORD:-postgres}
+
+selenium:
+  headless: ${SELENIUM_HEADLESS:-true}
+  window-width: 1920
+  window-height: 1080
+
+security:
+  jwt_secret: ${JWT_SECRET:-ci-frase-secreta-2026-bien-gordito-defecto}
