@@ -2,6 +2,7 @@ package io.github.roony11_1.base;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +18,7 @@ public abstract class BaseTest
     protected JavascriptExecutor jsExecutor;
 
     protected static final String BASE_URL = "http://localhost:3333";
+    protected static final String DEFAULT_PASSWORD = "123456";
 
     @BeforeEach 
     public void setUp()
@@ -74,5 +76,28 @@ public abstract class BaseTest
         driver.findElement(By.id("password")).sendKeys(password);
 
         driver.findElement(By.cssSelector("[data-testid='button-login']")).click();
+    }
+
+    protected record TestUser(String usuario, String correo, String password) 
+    {
+
+    }
+
+    /**
+     * Crea un usuario único con la contraseña por defecto (123456).
+     */
+    protected TestUser crearUsuarioUnico(String prefijo) 
+    {
+        return crearUsuarioUnico(prefijo, DEFAULT_PASSWORD);
+    }
+
+    /**
+     * Crea un usuario único con una contraseña específica.
+     */
+    protected TestUser crearUsuarioUnico(String nombre, String contrasena) 
+    {
+        String sufijo  = String.valueOf(Instant.now().toEpochMilli());
+        String usuario = nombre + sufijo;
+        return new TestUser(usuario, usuario + "@test.com", contrasena);
     }
 }

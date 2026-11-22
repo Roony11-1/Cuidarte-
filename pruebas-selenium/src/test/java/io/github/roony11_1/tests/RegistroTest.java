@@ -18,22 +18,18 @@ public class RegistroTest extends BaseTest
     private final UsuarioDao usuarios = new UsuarioDao();
 
     @Test
-    @DisplayName("Registro de un nuevo usuario Paciente")
+    @DisplayName("Registro de un nuevo usuario")
     void registro()
     {
-        String sufijo = String.valueOf(Instant.now().toEpochMilli());
+        var usuarioTest = crearUsuarioUnico("ricardito", "ContraseñaHiperSegura");
 
-        String usuario = "ricardito" + sufijo;
-        String correo = usuario + "@gmail.com";
-        String contraseña = "ContraseñaHiperSegura";
-
-        registrar(usuario, correo, contraseña);
+        registrar(usuarioTest.usuario(), usuarioTest.correo(), usuarioTest.password());
 
         new WebDriverWait(driver, Duration.ofSeconds(10))
             .until(ExpectedConditions.or(
                 ExpectedConditions.urlContains("/login")
             ));
 
-        assertTrue(usuarios.existsByNombreUsuario(usuario));
+        assertTrue(usuarios.existsByNombreUsuario(usuarioTest.usuario()));
     }
 }
