@@ -39,7 +39,7 @@ public class PruebaRBAC extends BaseTest
     {
         TokenJWT token = login("paciente", "paciente");
 
-        HttpResponse<String> resp = get("/usuarios", token.get());
+        HttpResponse<String> resp = api.get("/usuarios", token.get());
 
         assertEquals(403, resp.statusCode(),
             "Un paciente debería recibir 403. Body= " + resp.body());
@@ -70,7 +70,7 @@ public class PruebaRBAC extends BaseTest
     {
         TokenJWT token = login("admin", "admin");
 
-        HttpResponse<String> resp = get("/usuarios", token.get());
+        HttpResponse<String> resp = api.get("/usuarios", token.get());
 
         assertEquals(200, resp.statusCode(),
             "Admin debería recibir 200. Body= " + resp.body());

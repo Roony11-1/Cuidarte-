@@ -1,9 +1,5 @@
 package io.github.roony11_1.base;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -18,6 +14,7 @@ import org.openqa.selenium.JavascriptExecutor;
 import org.openqa.selenium.WebDriver;
 import org.openqa.selenium.support.ui.WebDriverWait;
 
+import io.github.roony11_1.api.ApiClient;
 import io.github.roony11_1.config.ConfigReader;
 import io.github.roony11_1.enviroment.config.DriverFactory;
 
@@ -26,12 +23,13 @@ public abstract class BaseTest
     protected WebDriver driver;
     protected JavascriptExecutor jsExecutor;
 
-    private static final HttpClient HTTP = HttpClient.newHttpClient();
-
     protected static final ConfigReader CONFIG = ConfigReader.getInstance();
     protected static final String BASE_URL = CONFIG.app("base-url");
     protected static final String API_URL  = CONFIG.app("api-url");
     protected static final String DEFAULT_PASSWORD = "123456";
+
+    /** Única puerta de entrada a la API para todos los tests. */
+    protected final ApiClient api = new ApiClient(API_URL);
 
     @BeforeEach 
     public void setUp()
@@ -147,17 +145,6 @@ public abstract class BaseTest
         String sufijo  = String.valueOf(Instant.now().toEpochMilli());
         String usuario = nombre + sufijo;
         return new TestUser(usuario, usuario + "@test.com", contrasena);
-    }
-
-    protected  HttpResponse<String> get(String path, String token) throws Exception
-    {
-        HttpRequest req = HttpRequest.newBuilder()
-            .uri(URI.create(API_URL + path))
-            .header("Authorization", "Bearer " + token)
-            .GET()
-            .build();
-
-        return HTTP.send(req, HttpResponse.BodyHandlers.ofString());
     }
 
     /** Crea archivo temporal con tamaño fijo y prefijo opcional. */
