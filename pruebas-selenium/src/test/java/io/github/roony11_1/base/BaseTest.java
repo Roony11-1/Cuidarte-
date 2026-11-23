@@ -4,6 +4,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
@@ -156,5 +158,25 @@ public abstract class BaseTest
             .build();
 
         return HTTP.send(req, HttpResponse.BodyHandlers.ofString());
+    }
+
+    /** Crea archivo temporal con tamaño fijo y prefijo opcional. */
+    protected  static Path crearArchivo(String prueba, String nombre, int tamaño, String prefijo) throws Exception
+    {
+        Path tmp = Files.createTempFile(prueba + System.nanoTime() + "-", "-" + nombre);
+        byte[] bytes = new byte[tamaño];
+        if (prefijo != null) 
+        {
+            byte[] p = prefijo.getBytes(StandardCharsets.US_ASCII);
+            System.arraycopy(p, 0, bytes, 0, Math.min(p.length, bytes.length));
+        } 
+        else
+            java.util.Arrays.fill(bytes, (byte) 'A');
+        if (prefijo != null && prefijo.length() < tamaño)
+            java.util.Arrays.fill(bytes, prefijo.length(), tamaño, (byte) 'A');
+
+        Files.write(tmp, bytes);
+        tmp.toFile().deleteOnExit();
+        return tmp;
     }
 }
