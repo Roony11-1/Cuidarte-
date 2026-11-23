@@ -5,9 +5,13 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.http.HttpResponse;
+import java.time.Duration;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.openqa.selenium.By;
+import org.openqa.selenium.support.ui.ExpectedConditions;
+import org.openqa.selenium.support.ui.WebDriverWait;
 
 import io.github.roony11_1.base.BaseTest;
 
@@ -18,13 +22,9 @@ import io.github.roony11_1.base.BaseTest;
  *
  * <p>Verifica que un paciente con JWT válido <b>no</b> puede obtener el listado
  * de usuarios vía {@code GET /usuarios}, y que un administrador <b>sí</b> puede
- * (control positivo).</p>
+ * (control positivo). Además de las pruebas en UI</p>
  *
- * <p>La parte frontend (guard {@code RequireAdmin}) no se automatiza aquí;
- * se valida manualmente según Figuras 6.3 del informe.</p>
  *
- * <p>Comportamiento aceptado en el informe: el backend responde <b>soft-deny</b>
- * (200 + "No autorizado") en lugar de 403. El test acepta ambos.</p>
  */
 public class PruebaRBAC extends BaseTest
 {
@@ -46,6 +46,17 @@ public class PruebaRBAC extends BaseTest
 
         assertTrue(resp.body().toLowerCase().contains("no autorizado"),
             "Se esperaba mensaje de denegación. Body= " + resp.body());
+
+        // Prueba visual
+        driver.get(BASE_URL + "/usuarios");
+
+        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+
+        wait.until(ExpectedConditions.textToBePresentInElementLocated(
+        By.tagName("body"), "No autorizado"));
+
+        assertFalse(driver.getPageSource().contains("admin@cuidarteplus.com"),
+                "El listado de usuarios se renderizó a pesar del guard RequireAdmin");
     }
 
     /**
@@ -69,5 +80,16 @@ public class PruebaRBAC extends BaseTest
 
         assertTrue(resp.body().contains("\"nombre_usuario\""),
             "Se esperaba listado de usuarios en el body. Body=" + resp.body());
+
+        // prueba visual
+        driver.get(BASE_URL + "/usuarios");
+
+        WebDriverWait wait = new WebDriverWait(driver, Duration.ofSeconds(10));
+
+        wait.until(ExpectedConditions.textToBePresentInElementLocated(
+                By.tagName("body"), "Gestión de Usuarios"));
+
+        assertFalse(driver.getPageSource().contains("No autorizado"),
+                "El guard mostró 'No autorizado' a un admin (debería permitir el acceso)");
     }
 }
