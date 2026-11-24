@@ -60,91 +60,104 @@ public class EliminacionExamenTest extends BaseTest
         String diagnosis = "GEM-PF-003-" + System.nanoTime();
         long examenId = crearExamenConDocumento(token.get(), diagnosis);
 
-        assertTrue(
-            dao.existeExamen(examenId),
-            "El examen de prueba no quedó registrado en PostgreSQL."
-        );
+        // Examen "testigo" que permanece en la base mientras se comprueba el
+        // listado: garantiza que la tabla tenga al menos una fila y que el
+        // frontend haya terminado de cargar, sin depender de datos previos.
+        String diagnosisTestigo = "GEM-PF-003-control-" + System.nanoTime();
+        long examenTestigoId = crearExamen(token.get(), diagnosisTestigo);
 
-        assertEquals(
-            1,
-            dao.contarDocumentos(examenId),
-            "El documento de prueba no quedó registrado en PostgreSQL."
-        );
+        try
+        {
+            assertTrue(
+                dao.existeExamen(examenId),
+                "El examen de prueba no quedó registrado en PostgreSQL."
+            );
 
-        verificarVisibleEnListado(diagnosis);
+            assertEquals(
+                1,
+                dao.contarDocumentos(examenId),
+                "El documento de prueba no quedó registrado en PostgreSQL."
+            );
 
-        Set<Long> otrosExamenes = new HashSet<>(dao.idsExamenes());
-        otrosExamenes.remove(examenId);
+            verificarVisibleEnListado(diagnosis);
 
-        long auditoriaPrevia = dao.ultimaEliminacion()
-            .map(DocumentoExamenDao.Auditoria::id)
-            .orElse(0L);
+            Set<Long> otrosExamenes = new HashSet<>(dao.idsExamenes());
+            otrosExamenes.remove(examenId);
 
-        HttpResponse<String> respuesta = api.delete(
-            "/examenes/" + examenId, token.get());
+            long auditoriaPrevia = dao.ultimaEliminacion()
+                .map(DocumentoExamenDao.Auditoria::id)
+                .orElse(0L);
 
-        assertEquals(
-            200,
-            respuesta.statusCode(),
-            "El DELETE debía responder 200. Body=" + respuesta.body()
-        );
+            HttpResponse<String> respuesta = api.delete(
+                "/examenes/" + examenId, token.get());
 
-        assertTrue(
-            respuesta.body().contains("\"deleted\":true"),
-            "Se esperaba el cuerpo {\"deleted\":true}. Body=" + respuesta.body()
-        );
+            assertEquals(
+                200,
+                respuesta.statusCode(),
+                "El DELETE debía responder 200. Body=" + respuesta.body()
+            );
 
-        // INC-DIN-03: estos asserts describen el borrado FÍSICO actual. Cuando se
-        // implemente el borrado lógico tendrán que invertirse (examen y documentos
-        // conservados, pero ocultos en el listado).
-        assertFalse(
-            dao.existeExamen(examenId),
-            "INC-DIN-03: el examen se conservó en la base de datos; "
-                + "actualizar este test al borrado lógico."
-        );
+            assertTrue(
+                respuesta.body().contains("\"deleted\":true"),
+                "Se esperaba el cuerpo {\"deleted\":true}. Body=" + respuesta.body()
+            );
 
-        assertEquals(
-            0,
-            dao.contarDocumentos(examenId),
-            "INC-DIN-03: los documentos se conservaron; "
-                + "actualizar este test al borrado lógico."
-        );
+            // INC-DIN-03: estos asserts describen el borrado FÍSICO actual. Cuando se
+            // implemente el borrado lógico tendrán que invertirse (examen y documentos
+            // conservados, pero ocultos en el listado).
+            assertFalse(
+                dao.existeExamen(examenId),
+                "INC-DIN-03: el examen se conservó en la base de datos; "
+                    + "actualizar este test al borrado lógico."
+            );
 
-        assertEquals(
-            otrosExamenes,
-            new HashSet<>(dao.idsExamenes()),
-            "El DELETE afectó exámenes que no eran el objetivo."
-        );
+            assertEquals(
+                0,
+                dao.contarDocumentos(examenId),
+                "INC-DIN-03: los documentos se conservaron; "
+                    + "actualizar este test al borrado lógico."
+            );
 
-        DocumentoExamenDao.Auditoria auditoria = dao.ultimaEliminacion()
-            .orElseThrow(() -> new AssertionError(
-                "No se registró la eliminación en la tabla auditoria."));
+            assertEquals(
+                otrosExamenes,
+                new HashSet<>(dao.idsExamenes()),
+                "El DELETE afectó exámenes que no eran el objetivo."
+            );
 
-        assertTrue(
-            auditoria.id() > auditoriaPrevia,
-            "No se insertó un registro nuevo de auditoría para la eliminación."
-        );
+            DocumentoExamenDao.Auditoria auditoria = dao.ultimaEliminacion()
+                .orElseThrow(() -> new AssertionError(
+                    "No se registró la eliminación en la tabla auditoria."));
 
-        assertTrue(
-            Pattern.compile("ID\\s+" + examenId + "\\b")
-                .matcher(auditoria.accion())
-                .find(),
-            "La auditoría no identifica el examen eliminado. Acción="
-                + auditoria.accion()
-        );
+            assertTrue(
+                auditoria.id() > auditoriaPrevia,
+                "No se insertó un registro nuevo de auditoría para la eliminación."
+            );
 
-        assertEquals(
-            1L,
-            auditoria.usuarioId(),
-            "La auditoría debía registrar al administrador (usuario_id = 1)."
-        );
+            assertTrue(
+                Pattern.compile("ID\\s+" + examenId + "\\b")
+                    .matcher(auditoria.accion())
+                    .find(),
+                "La auditoría no identifica el examen eliminado. Acción="
+                    + auditoria.accion()
+            );
 
-        assertNotNull(
-            auditoria.fechaHora(),
-            "La auditoría no registró la fecha y hora de la eliminación."
-        );
+            assertEquals(
+                1L,
+                auditoria.usuarioId(),
+                "La auditoría debía registrar al administrador (usuario_id = 1)."
+            );
 
-        verificarOcultoEnListado(diagnosis);
+            assertNotNull(
+                auditoria.fechaHora(),
+                "La auditoría no registró la fecha y hora de la eliminación."
+            );
+
+            verificarOcultoEnListado(diagnosis, diagnosisTestigo);
+        }
+        finally
+        {
+            api.delete("/examenes/" + examenTestigoId, token.get());
+        }
     }
 
     @Test
@@ -212,20 +225,7 @@ public class EliminacionExamenTest extends BaseTest
     private long crearExamenConDocumento(String token, String diagnosis)
         throws Exception
     {
-        String json = String.format(
-            "{\"tipo_examen_medico_id\":%d,\"paciente_id\":%d,\"diagnosis\":\"%s\"}",
-            TIPO_EXAMEN_ID, PACIENTE_ID, diagnosis
-        );
-
-        HttpResponse<String> creado = api.postJson("/examenes", token, json);
-
-        assertEquals(
-            201,
-            creado.statusCode(),
-            "No se pudo crear el examen de prueba. Body=" + creado.body()
-        );
-
-        long examenId = ApiClient.extraerId(creado.body());
+        long examenId = crearExamen(token, diagnosis);
 
         Path pdf = crearArchivo(
             "gem-pf-003", "muestra.pdf", TAMANO_PDF, "%PDF-1.4\n%");
@@ -249,6 +249,25 @@ public class EliminacionExamenTest extends BaseTest
         return examenId;
     }
 
+    /** Crea un examen sin documento usando la API real. */
+    private long crearExamen(String token, String diagnosis) throws Exception
+    {
+        String json = String.format(
+            "{\"tipo_examen_medico_id\":%d,\"paciente_id\":%d,\"diagnosis\":\"%s\"}",
+            TIPO_EXAMEN_ID, PACIENTE_ID, diagnosis
+        );
+
+        HttpResponse<String> creado = api.postJson("/examenes", token, json);
+
+        assertEquals(
+            201,
+            creado.statusCode(),
+            "No se pudo crear el examen de prueba. Body=" + creado.body()
+        );
+
+        return ApiClient.extraerId(creado.body());
+    }
+
     /**
      * Comprueba que el examen aparece en el listado antes de eliminarlo. Sin esta
      * verificación, la ausencia posterior podría ser un falso positivo por una
@@ -263,15 +282,17 @@ public class EliminacionExamenTest extends BaseTest
     }
 
     /**
-     * Recarga el listado y espera a que la tabla tenga filas (GET /examenes tarda
-     * 5 s por el delay artificial) antes de comprobar que el examen ya no está.
+     * Recarga el listado y espera a que aparezca el examen testigo (GET /examenes
+     * tarda 5 s por el delay artificial) antes de comprobar que el examen
+     * eliminado ya no está. El testigo evita falsos positivos cuando la base no
+     * tiene otros exámenes.
      */
-    private void verificarOcultoEnListado(String diagnosis)
+    private void verificarOcultoEnListado(String diagnosis, String diagnosisTestigo)
     {
         driver.get(BASE_URL + "/examenes");
 
-        esperar(25).until(ExpectedConditions.visibilityOfElementLocated(
-            By.xpath("//table//tbody/tr")));
+        esperar(25).until(ExpectedConditions.textToBePresentInElementLocated(
+            By.tagName("body"), diagnosisTestigo));
 
         assertFalse(
             driver.getPageSource().contains(diagnosis),

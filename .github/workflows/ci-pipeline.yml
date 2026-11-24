@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  checks: write
+  pull-requests: read
+
 jobs:
   changes:
     name: Detectar cambios
@@ -14,6 +19,7 @@ jobs:
     outputs:
       backend: ${{ steps.filter.outputs.backend }}
       frontend: ${{ steps.filter.outputs.frontend }}
+      selenium: ${{ steps.filter.outputs.selenium }}
 
     steps:
       - name: Checkout repository
@@ -28,6 +34,10 @@ jobs:
               - 'BACKEND/**'
             frontend:
               - 'FRONTEND/**'
+            selenium:
+              - 'pruebas-selenium/**'
+              - 'docker-compose.yml'
+              - '.github/workflows/ci-pipeline.yml'
 
   sonar-backend:
     name: Analisis Backend
@@ -116,7 +126,7 @@ jobs:
     needs: [changes, sonar-backend, sonar-frontend]
     if: |
       always() &&
-      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true') &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.selenium == 'true') &&
       (needs.sonar-backend.result == 'success' || needs.sonar-backend.result == 'skipped') &&
       (needs.sonar-frontend.result == 'success' || needs.sonar-frontend.result == 'skipped')
     
@@ -130,6 +140,8 @@ jobs:
       PORT_BACKEND: 4444
       PORT_FRONTEND: 3333
       JWT_SECRET: ci-frase-secreta-2026-bien-gordito-defecto
+      # Chrome nativo del runner (el Firefox de Ubuntu es snap y exige Selenium >= 4.30)
+      SELENIUM_BROWSER: chrome
       # Variables para el entorno de pruebas
       BASE_URL: http://localhost:3333
       API_URL: http://localhost:4444
@@ -155,8 +167,8 @@ jobs:
 
       - name: Esperar al stack
         run: |
-          timeout 240 bash -c 'until curl -sf http://localhost:4444/ > /dev/null; do sleep 3; done' || true
-          timeout 240 bash -c 'until curl -sf http://localhost:3333/ > /dev/null; do sleep 3; done'
+          timeout 240 bash -c 'until curl -s -o /dev/null http://localhost:4444/openapi.json; do sleep 3; done'
+          timeout 240 bash -c 'until curl -s -o /dev/null http://localhost:3333/; do sleep 3; done'
 
       - name: Ejecutar tests Selenium
         working-directory: ./pruebas-selenium

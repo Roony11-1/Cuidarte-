@@ -2,6 +2,7 @@ package io.github.roony11_1.tests;
 
 import static org.junit.jupiter.api.Assertions.assertAll;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.net.http.HttpResponse;
@@ -14,10 +15,13 @@ import java.util.regex.Pattern;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.function.Executable;
 
+import io.github.roony11_1.api.ApiClient;
 import io.github.roony11_1.base.BaseTest;
 
 /**
@@ -25,9 +29,13 @@ import io.github.roony11_1.base.BaseTest;
  *
  * <p>Requerimientos: NFR-SEG-9 y NFR-SEG-4. Tipo: No funcional / Seguridad.</p>
  *
- * <p>Verifica que {@code GET /examenes/3} responde siempre HTTP 401 con el mismo
+ * <p>Verifica que {@code GET /examenes/:id} responde siempre HTTP 401 con el mismo
  * cuerpo genérico cuando el token está ausente, malformado, con la firma
  * alterada o expirado, y HTTP 200 cuando el token es válido.</p>
+ *
+ * <p>El examen consultado se crea en {@code @BeforeEach} con la API real y se
+ * elimina en {@code @AfterEach}. Así el test no depende de IDs que existan en la
+ * base de datos (por ejemplo, la base limpia que levanta el pipeline).</p>
  *
  * <p>Para que el caso "token expirado" sea real (firma correcta y solo el
  * {@code exp} vencido) el test firma sus propios JWT HS256 con el secreto
@@ -38,23 +46,59 @@ import io.github.roony11_1.base.BaseTest;
  */
 public class TokenJwtInvalidoTest extends BaseTest
 {
-    private static final String RUTA_EXAMEN = "/examenes/3";
-
     private static final String TOKEN_MALFORMADO = "abc.def.ghi";
 
     private static final String SECRETO = CONFIG.security("jwt_secret");
+
+    private String tokenMedico;
+    private long examenId;
+
+    @BeforeEach
+    void crearExamenDePrueba() throws Exception
+    {
+        tokenMedico = api.iniciarSesion("medico", "medico");
+
+        String payload = """
+            {
+                "paciente_id": 1,
+                "tipo_examen_medico_id": 1,
+                "diagnosis": "Examen GEM-PNF-002",
+                "tratamiento": "Sin tratamiento",
+                "observaciones": "Prueba de manejo de token JWT",
+                "notas": "Creado vía API por TokenJwtInvalidoTest"
+            }
+            """;
+
+        HttpResponse<String> creado = api.postJson("/examenes", tokenMedico, payload);
+
+        assertEquals(201, creado.statusCode(),
+            "No se pudo crear el examen de prueba. Body=" + creado.body());
+
+        examenId = ApiClient.extraerId(creado.body());
+    }
+
+    @AfterEach
+    void eliminarExamenDePrueba() throws Exception
+    {
+        if (examenId <= 0)
+            return;
+
+        String tokenAdmin = api.iniciarSesion("admin", "admin");
+
+        api.delete("/examenes/" + examenId, tokenAdmin);
+    }
 
     @Test
     @DisplayName("GEM-PNF-002 · Token JWT ausente, malformado, adulterado o expirado")
     void tokensInvalidosDevuelven401Uniforme() throws Exception
     {
-        String tokenValido = api.iniciarSesion("medico", "medico");
+        String tokenValido = tokenMedico;
         long usuarioId = usuarioIdDe(tokenValido);
 
-        HttpResponse<String> sinToken = api.get(RUTA_EXAMEN, null);
-        HttpResponse<String> malformado = api.get(RUTA_EXAMEN, TOKEN_MALFORMADO);
-        HttpResponse<String> firmaAlterada = api.get(RUTA_EXAMEN, alterarFirma(tokenValido));
-        HttpResponse<String> expirado = api.get(RUTA_EXAMEN,
+        HttpResponse<String> sinToken = api.get(rutaExamen(), null);
+        HttpResponse<String> malformado = api.get(rutaExamen(), TOKEN_MALFORMADO);
+        HttpResponse<String> firmaAlterada = api.get(rutaExamen(), alterarFirma(tokenValido));
+        HttpResponse<String> expirado = api.get(rutaExamen(),
             firmar(usuarioId, ahoraEnSegundos() - 3600));
 
         List<Caso> invalidos = List.of(
@@ -66,7 +110,7 @@ public class TokenJwtInvalidoTest extends BaseTest
 
         String cuerpoEsperado = sinToken.body();
 
-        assertAll("GET " + RUTA_EXAMEN + " con tokens inválidos",
+        assertAll("GET " + rutaExamen() + " con tokens inválidos",
             invalidos.stream().map(caso -> (Executable) () ->
             {
                 assertEquals(401, caso.respuesta().statusCode(),
@@ -91,24 +135,30 @@ public class TokenJwtInvalidoTest extends BaseTest
     @DisplayName("GEM-PNF-002 · Control con token válido y token firmado vigente")
     void tokensValidosDevuelven200() throws Exception
     {
-        String tokenValido = api.iniciarSesion("medico", "medico");
+        String tokenValido = tokenMedico;
         long usuarioId = usuarioIdDe(tokenValido);
 
-        HttpResponse<String> controlLogin = api.get(RUTA_EXAMEN, tokenValido);
-        HttpResponse<String> controlFirmado = api.get(RUTA_EXAMEN,
+        HttpResponse<String> controlLogin = api.get(rutaExamen(), tokenValido);
+        HttpResponse<String> controlFirmado = api.get(rutaExamen(),
             firmar(usuarioId, ahoraEnSegundos() + 3600));
 
-        assertAll("GET " + RUTA_EXAMEN + " con tokens válidos",
+        assertAll("GET " + rutaExamen() + " con tokens válidos",
             () -> assertEquals(200, controlLogin.statusCode(),
                 "El token de login debía permitir el acceso. Body=" + controlLogin.body()),
-            () -> assertTrue(controlLogin.body().contains("\"id\":\"3\""),
-                "La respuesta debía corresponder al examen 3. Body=" + controlLogin.body()),
+            () -> assertTrue(controlLogin.body().contains("\"id\":\"" + examenId + "\""),
+                "La respuesta debía corresponder al examen " + examenId
+                    + ". Body=" + controlLogin.body()),
 
             () -> assertEquals(200, controlFirmado.statusCode(),
                 "Un JWT firmado con el secreto configurado debía ser aceptado; "
                     + "si falla, 'security.jwt_secret' no coincide con el del backend. "
                     + "Body=" + controlFirmado.body())
         );
+    }
+
+    private String rutaExamen()
+    {
+        return "/examenes/" + examenId;
     }
 
     /** Cambia el primer carácter de la firma para invalidarla sin tocar el payload. */

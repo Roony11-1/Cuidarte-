@@ -34,7 +34,7 @@ public abstract class BaseTest
     @BeforeEach 
     public void setUp()
     {
-        driver = DriverFactory.usarFirefox();
+        driver = DriverFactory.crear();
 
         jsExecutor = (JavascriptExecutor) driver;
     }
