@@ -1,6 +1,18 @@
-BACKEND/node_modules
-FRONTEND/node_modules
+BACKEND/node_modules/
+FRONTEND/node_modules/
 
+# Maven / Java
+**/target/
+**/*.class
+**/*.jar
+**/*.war
+**/*.ear
+**/.mvn/wrapper/maven-wrapper.jar
+
+# Environment
 .env
-
 !.env.example
+
+# Archivos subidos por usuarios (no versionar datos de pacientes)
+BACKEND/uploads/*
+!BACKEND/uploads/.gitkeep
