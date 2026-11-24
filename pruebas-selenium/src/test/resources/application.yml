@@ -15,4 +15,4 @@ selenium:
   window-height: 1080
 
 security:
-  jwt_secret: ${JWT_SECRET:-ci-frase-secreta-2026-bien-gordito-defecto}
+  jwt_secret: ${JWT_SECRET:-0d1d8132f0fde5beabb417b434ff10f1cae8635a461686b0f46ac9c2bbfbd0e8}

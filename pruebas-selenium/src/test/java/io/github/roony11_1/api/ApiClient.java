@@ -30,6 +30,9 @@ public class ApiClient
     private static final Pattern ID =
         Pattern.compile("\"id\"\\s*:\\s*\"?(\\d+)\"?");
 
+    private static final Pattern TOKEN =
+        Pattern.compile("\"token\"\\s*:\\s*\"([^\"]+)\"");
+
     private final String baseUrl;
 
     public ApiClient(String baseUrl)
@@ -77,6 +80,27 @@ public class ApiClient
         return enviar(request);
     }
 
+    /** Inicia sesión vía API y devuelve el JWT de la respuesta. */
+    public String iniciarSesion(String usuario, String password) throws Exception
+    {
+        String json = "{\"nombre_usuario\":\"" + escaparJson(usuario)
+            + "\",\"password\":\"" + escaparJson(password) + "\"}";
+
+        HttpResponse<String> respuesta = postJson("/autenticacion/login", null, json);
+
+        if (respuesta.statusCode() != 200)
+            throw new IllegalStateException("Login falló para " + usuario
+                + ": HTTP " + respuesta.statusCode() + " Body=" + respuesta.body());
+
+        Matcher matcher = TOKEN.matcher(respuesta.body());
+
+        if (!matcher.find())
+            throw new IllegalStateException("La respuesta de login no contiene token: "
+                + respuesta.body());
+
+        return matcher.group(1);
+    }
+
     /** Extrae el primer {@code "id"} numérico del cuerpo JSON. */
     public static long extraerId(String body)
     {
@@ -90,10 +114,14 @@ public class ApiClient
 
     private HttpRequest.Builder base(String path, String token)
     {
-        return HttpRequest.newBuilder()
+        HttpRequest.Builder builder = HttpRequest.newBuilder()
             .uri(URI.create(baseUrl + path))
-            .timeout(Duration.ofSeconds(30))
-            .header("Authorization", "Bearer " + token);
+            .timeout(Duration.ofSeconds(30));
+
+        if (token != null && !token.isBlank())
+            builder.header("Authorization", "Bearer " + token);
+
+        return builder;
     }
 
     private static HttpResponse<String> enviar(HttpRequest request) throws Exception
@@ -132,5 +160,10 @@ public class ApiClient
     private static void escribir(ByteArrayOutputStream body, String texto)
     {
         body.writeBytes(texto.getBytes(StandardCharsets.UTF_8));
+    }
+
+    private static String escaparJson(String valor)
+    {
+        return valor.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 }
