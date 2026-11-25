@@ -16,3 +16,5 @@ FRONTEND/node_modules/
 # Archivos subidos por usuarios (no versionar datos de pacientes)
 BACKEND/uploads/*
 !BACKEND/uploads/.gitkeep
+
+.gitignore
