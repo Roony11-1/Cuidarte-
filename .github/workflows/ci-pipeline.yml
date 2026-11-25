@@ -1,4 +1,3 @@
-
 name: Pipeline de integración continua (Definitivo)
 
 on:
@@ -6,6 +5,9 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 permissions:
   contents: read
@@ -52,6 +54,7 @@ jobs:
               - 'pruebas-jmeter/**'
               - 'docker-compose.yml'
               - '.github/workflows/ci-pipeline.yml'
+              - '.github/workflows/jmeter-pr.yml'
 
   sonar-backend:
     name: Analisis Backend
@@ -75,11 +78,12 @@ jobs:
           exclusions: "**/node_modules/**,**/dist/**,**/*.test.js"
           wait-for-server: 120
           retention-days: 7
+          artifact-name: sonar-backend-results
 
       - name: Download Backend Sonar Report
         uses: actions/download-artifact@v4
         with:
-          name: sonar-analysis-results
+          name: sonar-backend-results
           path: sonar-backend-report
         continue-on-error: true
 
@@ -121,11 +125,12 @@ jobs:
           exclusions: "**/node_modules/**,**/dist/**,**/*.test.js"
           wait-for-server: 120
           retention-days: 7
+          artifact-name: sonar-frontend-results
 
       - name: Download Frontend Sonar Report
         uses: actions/download-artifact@v4
         with:
-          name: sonar-analysis-results
+          name: sonar-frontend-results
           path: sonar-frontend-report
         continue-on-error: true
 
@@ -180,7 +185,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Instalar JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '21'
@@ -264,20 +269,20 @@ jobs:
       - name: Limpieza
         if: always()
         run: docker compose down -v
-        
+
   jmeter-pr:
-      name: JMeter ligero (PR)
-      needs: [changes, sonar-backend, selenium]
-      if: |
-        always() &&
-        github.event_name == 'pull_request' &&
-        (needs.changes.outputs.backend == 'true' || needs.changes.outputs.jmeter == 'true') &&
-        (needs.sonar-backend.result == 'success' || needs.sonar-backend.result == 'skipped') &&
-        (needs.selenium.result == 'success' || needs.selenium.result == 'skipped')
-      uses: ./.github/workflows/jmeter-pr.yml
-      with:
-        pr_number: ${{ format('{0}', github.event.pull_request.number) }}
-        commit_sha: ${{ github.sha }}
+    name: JMeter ligero (PR)
+    needs: [changes, sonar-backend, selenium]
+    if: |
+      always() &&
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.jmeter == 'true') &&
+      (needs.sonar-backend.result == 'success' || needs.sonar-backend.result == 'skipped') &&
+      (needs.selenium.result == 'success' || needs.selenium.result == 'skipped')
+    uses: ./.github/workflows/jmeter-pr.yml
+    with:
+      pr_number: ${{ format('{0}', github.event.pull_request.number) }}
+      commit_sha: ${{ github.sha }}
 
   publish-backend:
     name: Publicar imagen Backend
@@ -360,3 +365,149 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  summary-report:
+    name: Resumen Consolidado
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - sonar-backend
+      - sonar-frontend
+      - selenium
+      - owasp-zap
+      - jmeter-pr
+    if: always() && github.event_name == 'pull_request'
+
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Descargar artifacts generados en el run
+        uses: actions/download-artifact@v4
+        with:
+          path: consolidated-artifacts
+        continue-on-error: true
+
+      - name: Generar tabla unificada en Summary
+        env:
+          RES_SONAR_BACK: ${{ needs.sonar-backend.result }}
+          RES_SONAR_FRONT: ${{ needs.sonar-frontend.result }}
+          RES_SELENIUM: ${{ needs.selenium.result }}
+          RES_ZAP: ${{ needs.owasp-zap.result }}
+          RES_JMETER: ${{ needs.jmeter-pr.result }}
+        run: |
+          python3 - << 'EOF'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+
+          def parse_sonar_md(path: Path) -> dict:
+              text = path.read_text(encoding="utf-8")
+              project_m = re.search(r"Project Key:\s*(.+)", text)
+              status_m = re.search(r"Status:\s*(.+)", text)
+              bugs_m = re.search(r"\|Bugs\|(\d+)\|", text)
+              vuln_m = re.search(r"\|Vulnerabilities\|(\d+)\|", text)
+              smells_m = re.search(r"\|Code_smells\|(\d+)\|", text)
+              return {
+                  "project": project_m.group(1).strip() if project_m else "",
+                  "status": status_m.group(1).strip() if status_m else "OK",
+                  "bugs": bugs_m.group(1) if bugs_m else "0",
+                  "vulnerabilities": vuln_m.group(1) if vuln_m else "0",
+                  "code_smells": smells_m.group(1) if smells_m else "0",
+              }
+
+
+          def parse_zap_json(path: Path) -> dict:
+              data = json.loads(path.read_text(encoding="utf-8"))
+              counts = {"High": 0, "Medium": 0, "Low": 0, "Informational": 0}
+              for site in data.get("site", []):
+                  for alert in site.get("alerts", []):
+                      risk = alert.get("riskdesc", "").split(" ")[0]
+                      if risk in counts:
+                          counts[risk] += 1
+              return counts
+
+
+          def main() -> None:
+              summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+              if not summary_file:
+                  return
+
+              base = Path("consolidated-artifacts")
+              sonar_reports = {}
+              for md in base.rglob("analysis_report.md"):
+                  parsed = parse_sonar_md(md)
+                  sonar_reports[parsed["project"]] = parsed
+
+              lines = [
+                  "## Resumen Consolidado — Calidad, Seguridad y Rendimiento",
+                  "",
+                  "| Herramienta / Etapa | Estado | Métricas y Detalles |",
+                  "| :--- | :--- | :--- |",
+              ]
+
+              # 1. SonarQube Backend
+              sb = sonar_reports.get("cuidarteplus-backend")
+              if sb:
+                  lines.append(
+                      f"| SonarQube Backend (SAST) | `{sb['status']}` | "
+                      f"Bugs: **{sb['bugs']}** · Vulnerabilidades: **{sb['vulnerabilities']}** · Code Smells: **{sb['code_smells']}** |"
+                  )
+              else:
+                  lines.append(f"| SonarQube Backend (SAST) | `{os.environ.get('RES_SONAR_BACK', 'skipped')}` | Sin cambios en Backend |")
+
+              # 2. SonarQube Frontend
+              sf = sonar_reports.get("cuidarteplus-frontend")
+              if sf:
+                  lines.append(
+                      f"| SonarQube Frontend (SAST) | `{sf['status']}` | "
+                      f"Bugs: **{sf['bugs']}** · Vulnerabilidades: **{sf['vulnerabilities']}** · Code Smells: **{sf['code_smells']}** |"
+                  )
+              else:
+                  lines.append(f"| SonarQube Frontend (SAST) | `{os.environ.get('RES_SONAR_FRONT', 'skipped')}` | Sin cambios en Frontend |")
+
+              # 3. Selenium E2E
+              res_sel = os.environ.get("RES_SELENIUM", "skipped")
+              sel_detail = "Suites ejecutadas (detalle completo en la pestaña **Tests**)" if res_sel == "success" else f"Estado job: {res_sel}"
+              lines.append(f"| Pruebas Funcionales (Selenium) | `{res_sel.upper()}` | {sel_detail} |")
+
+              # 4. OWASP ZAP DAST
+              zap_json = next((p for p in base.rglob("*.json") if "zap" in str(p).lower()), None)
+              if zap_json:
+                  zc = parse_zap_json(zap_json)
+                  lines.append(
+                      f"| Seguridad Pasiva (OWASP ZAP) | `{os.environ.get('RES_ZAP', 'success').upper()}` | "
+                      f"High: **{zc['High']}** · Medium: **{zc['Medium']}** · Low: **{zc['Low']}** · Info: **{zc['Informational']}** |"
+                  )
+              else:
+                  lines.append(f"| Seguridad Pasiva (OWASP ZAP) | `{os.environ.get('RES_ZAP', 'skipped').upper()}` | Sin ejecución en este PR |")
+
+              # 5. JMeter Performance
+              jm_json = next(base.rglob("performance-summary.json"), None)
+              if jm_json:
+                  jm = json.loads(jm_json.read_text(encoding="utf-8"))
+                  jm_status = "PASS" if jm.get("passed") else "FAIL"
+                  lines.append(
+                      f"| Rendimiento API (JMeter Light) | `{jm_status}` | "
+                      f"Req: **{jm.get('total_requests', 0)}** · Fallos: **{jm.get('failed_requests', 0)}** · "
+                      f"Avg: **{jm.get('latency_avg_ms', 0)} ms** · p50: **{jm.get('latency_p50_ms', 0)} ms** · p95: **{jm.get('latency_p95_ms', 0)} ms** |"
+                  )
+              else:
+                  lines.append(f"| Rendimiento API (JMeter Light) | `{os.environ.get('RES_JMETER', 'skipped').upper()}` | Sin ejecución en este PR |")
+
+              lines.append("")
+              with open(summary_file, "a", encoding="utf-8") as handle:
+                  handle.write("\n".join(lines))
+
+
+          if __name__ == "__main__":
+              main()
+          EOF
