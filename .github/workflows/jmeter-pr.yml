@@ -1,0 +1,372 @@
+name: Pruebas de Rendimiento PR (JMeter)
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: 'Número del Pull Request'
+        required: false
+        type: string
+        default: ''
+      commit_sha:
+        description: 'SHA del commit evaluado'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  jmeter-pr:
+    name: JMeter Light (Código fuente PR)
+    runs-on: ubuntu-latest
+
+    env:
+      COMPOSE_PROJECT_NAME: cuidarteplus-jmeter-pr
+      NODE_ENV: production
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cuidarteplus_pr_perf
+      PORT_POSTGRES: 15443
+      PORT_BACKEND: 4445
+      PORT_FRONTEND: 3334
+      JWT_SECRET: ci-frase-secreta-2026-jmeter-pr
+      HOST_OPENAPI_URL: http://localhost:4445/openapi.json
+      JMETER_ADMIN_USER: admin
+      JMETER_ADMIN_PASS: admin
+      JMETER_MEDICO_USER: medico
+      JMETER_MEDICO_PASS: medico
+      EVALUATED_PR: ${{ inputs.pr_number || github.event.pull_request.number || 'na' }}
+      EVALUATED_SHA: ${{ inputs.commit_sha || github.sha }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compilar y levantar backend y base de datos del PR
+        run: docker compose up -d --build cuidarteplus-backend-ev
+
+      - name: Esperar disponibilidad real del backend
+        run: |
+          timeout 240 bash -c 'until curl -fsS -o /dev/null "${HOST_OPENAPI_URL}"; do sleep 3; done'
+          echo "Backend del PR operativo en ${HOST_OPENAPI_URL}"
+
+      - name: Generar plan dinámico JMeter (.jmx)
+        run: |
+          mkdir -p .jmeter-tmp jmeter-results
+          chmod 777 jmeter-results
+          cat << 'EOF' > .jmeter-tmp/generate_jmx.py
+          import json
+          import os
+          import random
+          import urllib.request
+          import xml.etree.ElementTree as ET
+
+
+          def discover_api_prefixes(openapi_url: str) -> dict:
+              with urllib.request.urlopen(openapi_url, timeout=15) as resp:
+                  spec = json.loads(resp.read().decode("utf-8"))
+              paths = list(spec.get("paths", {}).keys())
+
+              def match_prefix(suffix: str, keyword: str) -> str:
+                  for p in paths:
+                      if p.endswith(suffix) and keyword in p:
+                          return p[: -len(suffix)] if suffix else p
+                  return ""
+
+              prefixes = {
+                  "auth": match_prefix("/login", "auth"),
+                  "pacientes": match_prefix("/buscar/rut/{rut}", "paciente"),
+                  "tipo_examen": "",
+              }
+              for p in paths:
+                  if "tipo" in p and "examen" in p and "{" not in p:
+                      prefixes["tipo_examen"] = p.rstrip("/")
+                      break
+
+              missing = [k for k, v in prefixes.items() if not v]
+              if missing:
+                  raise RuntimeError(
+                      f"No se pudieron resolver prefijos OpenAPI para {missing}. Paths: {paths}"
+                  )
+              return prefixes
+
+
+          def compute_valid_rut(base_number: int) -> str:
+              reversed_digits = map(int, reversed(str(base_number)))
+              factors = [2, 3, 4, 5, 6, 7]
+              total = sum(d * factors[i % 6] for i, d in enumerate(reversed_digits))
+              rem = 11 - (total % 11)
+              dv = "0" if rem == 11 else ("K" if rem == 10 else str(rem))
+              return f"{base_number}-{dv}"
+
+
+          def add_prop(parent, tag: str, name: str, value: str):
+              el = ET.SubElement(parent, tag, {"name": name})
+              el.text = str(value)
+              return el
+
+
+          def add_header_manager(parent_ht, name: str, headers: dict):
+              hm = ET.SubElement(
+                  parent_ht,
+                  "HeaderManager",
+                  {
+                      "guiclass": "HeaderPanel",
+                      "testclass": "HeaderManager",
+                      "testname": name,
+                      "enabled": "true",
+                  },
+              )
+              coll = ET.SubElement(hm, "collectionProp", {"name": "HeaderManager.headers"})
+              for k, v in headers.items():
+                  ep = ET.SubElement(coll, "elementProp", {"name": "", "elementType": "Header"})
+                  add_prop(ep, "stringProp", "Header.name", k)
+                  add_prop(ep, "stringProp", "Header.value", v)
+              ET.SubElement(parent_ht, "hashTree")
+
+
+          def add_http_sampler(parent_ht, name: str, method: str, path: str, body: str | None = None):
+              sampler = ET.SubElement(
+                  parent_ht,
+                  "HTTPSamplerProxy",
+                  {
+                      "guiclass": "HttpTestSampleGui",
+                      "testclass": "HTTPSamplerProxy",
+                      "testname": name,
+                      "enabled": "true",
+                  },
+              )
+              args_ep = ET.SubElement(
+                  sampler,
+                  "elementProp",
+                  {"name": "HTTPsampler.Arguments", "elementType": "Arguments"},
+              )
+              args_coll = ET.SubElement(args_ep, "collectionProp", {"name": "Arguments.arguments"})
+              if body is not None:
+                  add_prop(sampler, "boolProp", "HTTPSampler.postBodyRaw", "true")
+                  arg = ET.SubElement(
+                      args_coll, "elementProp", {"name": "", "elementType": "HTTPArgument"}
+                  )
+                  add_prop(arg, "boolProp", "HTTPArgument.always_encode", "false")
+                  add_prop(arg, "stringProp", "Argument.value", body)
+                  add_prop(arg, "stringProp", "Argument.metadata", "=")
+
+              add_prop(sampler, "stringProp", "HTTPSampler.domain", "${__P(api_host,cuidarteplus-backend-ev)}")
+              add_prop(sampler, "stringProp", "HTTPSampler.port", "${__P(api_port,4000)}")
+              add_prop(sampler, "stringProp", "HTTPSampler.protocol", "${__P(api_protocol,http)}")
+              add_prop(sampler, "stringProp", "HTTPSampler.path", path)
+              add_prop(sampler, "stringProp", "HTTPSampler.method", method)
+              add_prop(sampler, "boolProp", "HTTPSampler.follow_redirects", "true")
+              add_prop(sampler, "boolProp", "HTTPSampler.auto_redirects", "false")
+              add_prop(sampler, "boolProp", "HTTPSampler.use_keepalive", "true")
+              add_prop(sampler, "boolProp", "HTTPSampler.DO_MULTIPART_POST", "false")
+              return ET.SubElement(parent_ht, "hashTree")
+
+
+          def add_json_extractor(sampler_ht, name: str, var_name: str, json_path: str):
+              jp = ET.SubElement(
+                  sampler_ht,
+                  "JSONPostProcessor",
+                  {
+                      "guiclass": "JSONPostProcessorGui",
+                      "testclass": "JSONPostProcessor",
+                      "testname": name,
+                      "enabled": "true",
+                  },
+              )
+              add_prop(jp, "stringProp", "JSONPostProcessor.referenceNames", var_name)
+              add_prop(jp, "stringProp", "JSONPostProcessor.jsonPathExprs", json_path)
+              add_prop(jp, "stringProp", "JSONPostProcessor.match_numbers", "1")
+              add_prop(jp, "stringProp", "JSONPostProcessor.defaultValues", "NOT_FOUND")
+              ET.SubElement(sampler_ht, "hashTree")
+
+
+          def add_groovy_postprocessor(sampler_ht, name: str, script: str):
+              jsr = ET.SubElement(
+                  sampler_ht,
+                  "JSR223PostProcessor",
+                  {
+                      "guiclass": "TestBeanGUI",
+                      "testclass": "JSR223PostProcessor",
+                      "testname": name,
+                      "enabled": "true",
+                  },
+              )
+              add_prop(jsr, "stringProp", "scriptLanguage", "groovy")
+              add_prop(jsr, "script", script)
+              ET.SubElement(sampler_ht, "hashTree")
+
+
+          def add_status_assertion(sampler_ht, expected_code: str):
+              ra = ET.SubElement(
+                  sampler_ht,
+                  "ResponseAssertion",
+                  {
+                      "guiclass": "AssertionGui",
+                      "testclass": "ResponseAssertion",
+                      "testname": f"Assert HTTP {expected_code}",
+                      "enabled": "true",
+                  },
+              )
+              coll = ET.SubElement(ra, "collectionProp", {"name": "Asserion.test_strings"})
+              add_prop(coll, "stringProp", "code", expected_code)
+              add_prop(ra, "stringProp", "Assertion.test_field", "Assertion.response_code")
+              add_prop(ra, "boolProp", "Assertion.assume_success", "false")
+              add_prop(ra, "intProp", "Assertion.test_type", "8")
+              ET.SubElement(sampler_ht, "hashTree")
+
+
+          def add_thread_group(root_ht, name: str, tg_type: str = "normal", threads: str = "1", loops: str = "1"):
+              tag_map = {
+                  "setup": ("SetupThreadGroup", "SetupThreadGroupGui"),
+                  "normal": ("ThreadGroup", "ThreadGroupGui"),
+                  "teardown": ("PostThreadGroup", "PostThreadGroupGui"),
+              }
+              tag, gui = tag_map[tg_type]
+              tg = ET.SubElement(
+                  root_ht,
+                  tag,
+                  {"guiclass": gui, "testclass": tag, "testname": name, "enabled": "true"},
+              )
+              add_prop(tg, "stringProp", "ThreadGroup.on_sample_error", "continue")
+              lc = ET.SubElement(
+                  tg,
+                  "elementProp",
+                  {
+                      "name": "ThreadGroup.main_controller",
+                      "elementType": "LoopController",
+                      "guiclass": "LoopControlPanel",
+                      "testclass": "LoopController",
+                      "enabled": "true",
+                  },
+              )
+              add_prop(lc, "boolProp", "LoopController.continue_forever", "false")
+              add_prop(lc, "stringProp", "LoopController.loops", loops)
+              add_prop(tg, "stringProp", "ThreadGroup.num_threads", threads)
+              add_prop(tg, "stringProp", "ThreadGroup.ramp_time", "1")
+              add_prop(tg, "boolProp", "ThreadGroup.scheduler", "false")
+              return ET.SubElement(root_ht, "hashTree")
+
+
+          def build_jmx(prefixes: dict, jmx_path: str):
+              root = ET.Element(
+                  "jmeterTestPlan",
+                  {"version": "1.2", "properties": "5.0", "jmeter": "5.6.3"},
+              )
+              root_ht = ET.SubElement(root, "hashTree")
+
+              tp = ET.SubElement(
+                  root_ht,
+                  "TestPlan",
+                  {
+                      "guiclass": "TestPlanGui",
+                      "testclass": "TestPlan",
+                      "testname": "Cuidarte+ JMeter PR Light",
+                      "enabled": "true",
+                  },
+              )
+              add_prop(tp, "boolProp", "TestPlan.functional_mode", "false")
+              add_prop(tp, "boolProp", "TestPlan.serialize_threadgroups", "true")
+              tp_ht = ET.SubElement(root_ht, "hashTree")
+
+              # 00. SETUP: Autenticación con usuarios del entorno de pruebas y paciente aislado
+              setup_ht = add_thread_group(tp_ht, "00_Setup_Auth_And_Isolated_Data", tg_type="setup")
+              add_header_manager(setup_ht, "JSON Header", {"Content-Type": "application/json"})
+
+              s_adm = add_http_sampler(
+                  setup_ht,
+                  "Setup_Login_Admin",
+                  "POST",
+                  f"{prefixes['auth']}/login",
+                  body='{"nombre_usuario":"${__P(admin_user)}","password":"${__P(admin_pass)}"}',
+              )
+              add_status_assertion(s_adm, "200")
+              add_json_extractor(s_adm, "Extract Admin Token", "token_admin", "$.token")
+              add_groovy_postprocessor(
+                  s_adm, "Store Admin JWT", 'props.put("jwt_admin", vars.get("token_admin"))'
+              )
+
+              s_med = add_http_sampler(
+                  setup_ht,
+                  "Setup_Login_Medico",
+                  "POST",
+                  f"{prefixes['auth']}/login",
+                  body='{"nombre_usuario":"${__P(medico_user)}","password":"${__P(medico_pass)}"}',
+              )
+              add_status_assertion(s_med, "200")
+              add_json_extractor(s_med, "Extract Medico Token", "token_medico", "$.token")
+              add_groovy_postprocessor(
+                  s_med, "Store Medico JWT", 'props.put("jwt_medico", vars.get("token_medico"))'
+              )
+
+              unique_num = random.randint(20_000_000, 24_999_999)
+              rut_test = compute_valid_rut(unique_num)
+              paciente_body = json.dumps(
+                  {
+                      "rut": rut_test,
+                      "primer_nombre": "JMeterPR",
+                      "apellido_paterno": "Aislado",
+                      "apellido_materno": "CI",
+                      "fecha_nacimiento": "1994-08-20",
+                      "sexo": "M",
+                      "email": f"perf.pr.{unique_num}@cuidarteplus.test",
+                  }
+              )
+              s_cpac = add_http_sampler(
+                  setup_ht,
+                  "Setup_Create_Isolated_Paciente",
+                  "POST",
+                  f"{prefixes['pacientes']}/",
+                  body=paciente_body,
+              )
+              add_header_manager(
+                  s_cpac,
+                  "Auth Medico JSON",
+                  {"Content-Type": "application/json", "Authorization": "Bearer ${__P(jwt_medico)}"},
+              )
+              add_status_assertion(s_cpac, "201")
+              add_json_extractor(s_cpac, "Extract Paciente ID", "paciente_test_id", "$.id")
+              add_groovy_postprocessor(
+                  s_cpac,
+                  "Store Paciente ID",
+                  'props.put("paciente_test_id", vars.get("paciente_test_id"))',
+              )
+
+              # 01. CARGA LIGERA: 20 solicitudes GET consecutivas (< 300 ms)
+              load_ht = add_thread_group(
+                  tp_ht,
+                  "01_Load_Light_20_Consecutive_GET",
+                  tg_type="normal",
+                  threads="1",
+                  loops="10",
+              )
+              add_header_manager(
+                  load_ht, "Auth Medico Load", {"Authorization": "Bearer ${__P(jwt_medico)}"}
+              )
+
+              s_get1 = add_http_sampler(
+                  load_ht, "PERF_GET_TipoExamen_List", "GET", f"{prefixes['tipo_examen']}/"
+              )
+              add_status_assertion(s_get1, "200")
+
+              s_get2 = add_http_sampler(
+                  load_ht,
+                  "PERF_GET_Paciente_ById",
+                  "GET",
+                  prefixes['pacientes'] + "/${__P(paciente_test_id)}",
+              )
+              add_status_assertion(s_get2, "200")
+
+              # 99. TEARDOWN: Limpiar paciente aislado creado en Setup
+              td_ht = add_thread_group(
+                  tp_ht, "99_TearDown_Cleanup_Isolated_Data", tg_type="teardown"
+              )
+              add_header_manager(
+                  td_ht,
