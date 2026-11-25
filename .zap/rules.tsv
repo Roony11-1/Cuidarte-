@@ -1,0 +1,8 @@
+# ID de Regla	Acción (IGNORE/WARN/FAIL)	Descripción
+10011	IGNORE	# Cookie Without Secure Flag
+10015	IGNORE	# Incomplete or No Cache-control Header
+10021	FAIL	# X-Content-Type-Options Header Missing
+10035	IGNORE	# Strict-Transport-Security Header Missing (en local no aplica)
+10038	FAIL	# Content Security Policy (CSP) Header Not Set
+10098	IGNORE	# Cross-Domain Misconfiguration
+10109	IGNORE	# Modern Web Application (informativo)
