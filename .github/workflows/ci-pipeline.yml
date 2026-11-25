@@ -49,6 +49,7 @@ jobs:
 
             jmeter:
               - 'BACKEND/**'
+              - 'pruebas-jmeter/**'
               - 'docker-compose.yml'
               - '.github/workflows/ci-pipeline.yml'
 
@@ -265,13 +266,14 @@ jobs:
         run: docker compose down -v
         
   jmeter-pr:
-      name: JMeter Light (PR)
-      needs: [changes, sonar-backend]
+      name: JMeter ligero (PR)
+      needs: [changes, sonar-backend, selenium]
       if: |
         always() &&
         github.event_name == 'pull_request' &&
         (needs.changes.outputs.backend == 'true' || needs.changes.outputs.jmeter == 'true') &&
-        (needs.sonar-backend.result == 'success' || needs.sonar-backend.result == 'skipped')
+        (needs.sonar-backend.result == 'success' || needs.sonar-backend.result == 'skipped') &&
+        (needs.selenium.result == 'success' || needs.selenium.result == 'skipped')
       uses: ./.github/workflows/jmeter-pr.yml
       with:
         pr_number: ${{ format('{0}', github.event.pull_request.number) }}
