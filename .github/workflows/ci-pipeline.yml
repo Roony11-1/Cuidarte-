@@ -1,3 +1,4 @@
+
 name: Pipeline de integración continua
 
 on:
@@ -32,8 +33,14 @@ jobs:
           filters: |
             backend:
               - 'BACKEND/**'
+              - 'docker-compose.yml'
+              - '.github/workflows/ci-pipeline.yml'
+
             frontend:
               - 'FRONTEND/**'
+              - 'docker-compose.yml'
+              - '.github/workflows/ci-pipeline.yml'
+
             selenium:
               - 'pruebas-selenium/**'
               - 'docker-compose.yml'
@@ -72,10 +79,12 @@ jobs:
       - name: Check Backend Quality Gate
         run: |
           REPORT=$(find . sonar-backend-report -name "analysis_report.md" 2>/dev/null | head -n 1)
+
           if [ -z "$REPORT" ]; then
             echo "No se encontró analysis_report.md del backend."
             exit 1
           fi
+
           echo "Informe: $REPORT"
           grep -q "Status.*OK" "$REPORT" && echo "Backend OK" \
             || { echo "Backend fallido. Bloqueando."; exit 1; }
@@ -88,7 +97,8 @@ jobs:
       always() &&
       github.event_name == 'pull_request' &&
       needs.changes.outputs.frontend == 'true' &&
-      (needs.sonar-backend.result == 'success' || needs.sonar-backend.result == 'skipped')
+      (needs.sonar-backend.result == 'success' ||
+       needs.sonar-backend.result == 'skipped')
 
     steps:
       - name: Checkout repository
@@ -115,10 +125,12 @@ jobs:
       - name: Check Frontend Quality Gate
         run: |
           REPORT=$(find . sonar-frontend-report -name "analysis_report.md" 2>/dev/null | head -n 1)
+
           if [ -z "$REPORT" ]; then
             echo "No se encontró analysis_report.md del frontend."
             exit 1
           fi
+
           echo "Informe: $REPORT"
           grep -q "Status.*OK" "$REPORT" && echo "Frontend OK" \
             || { echo "Frontend fallido. Bloqueando."; exit 1; }
@@ -130,9 +142,13 @@ jobs:
     if: |
       always() &&
       github.event_name == 'pull_request' &&
-      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.selenium == 'true') &&
-      (needs.sonar-backend.result == 'success' || needs.sonar-backend.result == 'skipped') &&
-      (needs.sonar-frontend.result == 'success' || needs.sonar-frontend.result == 'skipped')
+      (needs.changes.outputs.backend == 'true' ||
+       needs.changes.outputs.frontend == 'true' ||
+       needs.changes.outputs.selenium == 'true') &&
+      (needs.sonar-backend.result == 'success' ||
+       needs.sonar-backend.result == 'skipped') &&
+      (needs.sonar-frontend.result == 'success' ||
+       needs.sonar-frontend.result == 'skipped')
 
     env:
       COMPOSE_PROJECT_NAME: cuidarteplus-ci
@@ -156,7 +172,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: instalar JDK 21
+      - name: Instalar JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -202,7 +218,8 @@ jobs:
     needs: [changes]
     if: |
       github.event_name == 'pull_request' &&
-      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
+      (needs.changes.outputs.backend == 'true' ||
+       needs.changes.outputs.frontend == 'true')
 
     permissions:
       contents: read
