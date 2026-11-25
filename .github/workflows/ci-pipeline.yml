@@ -43,7 +43,9 @@ jobs:
     name: Analisis Backend
     runs-on: ubuntu-latest
     needs: [changes]
-    if: needs.changes.outputs.backend == 'true'
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.changes.outputs.backend == 'true'
 
     steps:
       - name: Checkout repository
@@ -84,6 +86,7 @@ jobs:
     needs: [changes, sonar-backend]
     if: |
       always() &&
+      github.event_name == 'pull_request' &&
       needs.changes.outputs.frontend == 'true' &&
       (needs.sonar-backend.result == 'success' || needs.sonar-backend.result == 'skipped')
 
@@ -126,10 +129,11 @@ jobs:
     needs: [changes, sonar-backend, sonar-frontend]
     if: |
       always() &&
+      github.event_name == 'pull_request' &&
       (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true' || needs.changes.outputs.selenium == 'true') &&
       (needs.sonar-backend.result == 'success' || needs.sonar-backend.result == 'skipped') &&
       (needs.sonar-frontend.result == 'success' || needs.sonar-frontend.result == 'skipped')
-    
+
     env:
       COMPOSE_PROJECT_NAME: cuidarteplus-ci
       NODE_ENV: production
@@ -140,7 +144,6 @@ jobs:
       PORT_BACKEND: 4444
       PORT_FRONTEND: 3333
       JWT_SECRET: ci-frase-secreta-2026-bien-gordito-defecto
-      # Variables para el entorno de pruebas
       BASE_URL: http://localhost:3333
       API_URL: http://localhost:4444
       DB_HOST: localhost
@@ -198,7 +201,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [changes]
     if: |
-      needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true'
+      github.event_name == 'pull_request' &&
+      (needs.changes.outputs.backend == 'true' || needs.changes.outputs.frontend == 'true')
 
     permissions:
       contents: read
@@ -236,3 +240,85 @@ jobs:
       - name: Limpieza
         if: always()
         run: docker compose down -v
+
+  publish-backend:
+    name: Publicar imagen Backend
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.backend == 'true'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login en GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extraer metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/backend
+          tags: |
+            type=sha,prefix=,suffix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Construir y publicar Backend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./BACKEND
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  publish-frontend:
+    name: Publicar imagen Frontend
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: |
+      github.event_name == 'push' &&
+      github.ref == 'refs/heads/main' &&
+      needs.changes.outputs.frontend == 'true'
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login en GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extraer metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/frontend
+          tags: |
+            type=sha,prefix=,suffix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Construir y publicar Frontend
+        uses: docker/build-push-action@v5
+        with:
+          context: ./FRONTEND
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
