@@ -1,0 +1,113 @@
+name: Pruebas de Rendimiento PR (JMeter)
+
+on:
+  workflow_call:
+    inputs:
+      pr_number:
+        description: 'Número del Pull Request'
+        required: false
+        type: string
+        default: ''
+      commit_sha:
+        description: 'SHA del commit evaluado'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  jmeter-pr:
+    name: JMeter Light (Código fuente PR)
+    runs-on: ubuntu-latest
+
+    env:
+      COMPOSE_PROJECT_NAME: cuidarteplus-jmeter-pr
+      NODE_ENV: production
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: cuidarteplus_pr_perf
+      PORT_POSTGRES: 15443
+      PORT_BACKEND: 4445
+      PORT_FRONTEND: 3334
+      JWT_SECRET: ci-frase-secreta-2026-jmeter-pr
+      HOST_OPENAPI_URL: http://localhost:4445/openapi.json
+      JMETER_ADMIN_USER: admin
+      JMETER_ADMIN_PASS: admin
+      JMETER_MEDICO_USER: medico
+      JMETER_MEDICO_PASS: medico
+      EVALUATED_PR: ${{ inputs.pr_number || github.event.pull_request.number || 'na' }}
+      EVALUATED_SHA: ${{ inputs.commit_sha || github.sha }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Compilar y levantar backend y base de datos del PR
+        run: docker compose up -d --build cuidarteplus-backend-ev
+
+      - name: Esperar disponibilidad real del backend
+        run: |
+          timeout 240 bash -c 'until curl -fsS -o /dev/null "${HOST_OPENAPI_URL}"; do sleep 3; done'
+          echo "Backend del PR operativo en ${HOST_OPENAPI_URL}"
+
+      - name: Generar plan dinámico JMeter (.jmx)
+        run: |
+          mkdir -p pruebas-jmeter/output
+          chmod 777 pruebas-jmeter/output
+          python3 pruebas-jmeter/generate_plan.py \
+            --openapi-url "${HOST_OPENAPI_URL}" \
+            --output pruebas-jmeter/output/cuidarteplus-pr.jmx
+
+      - name: Ejecutar Apache JMeter en contenedor Docker
+        run: |
+          docker run --rm \
+            --network cuidarteplus-network \
+            -v "${{ github.workspace }}/pruebas-jmeter/output:/results" \
+            --entrypoint jmeter \
+            alpine/jmeter:5.6.3 \
+            -n \
+            -t /results/cuidarteplus-pr.jmx \
+            -l /results/results.jtl \
+            -e -o /results/html-report \
+            -Japi_protocol=http \
+            -Japi_host=cuidarteplus-backend-ev \
+            -Japi_port=4000 \
+            -Jadmin_user="${JMETER_ADMIN_USER}" \
+            -Jadmin_pass="${JMETER_ADMIN_PASS}" \
+            -Jmedico_user="${JMETER_MEDICO_USER}" \
+            -Jmedico_pass="${JMETER_MEDICO_PASS}" \
+            -Jhttpclient4.retrycount=0 \
+            -Jjmeter.save.saveservice.requestHeaders=false \
+            -Jjmeter.save.saveservice.responseHeaders=false
+
+      - name: Validar resultados JTL y umbral (< 300 ms)
+        if: always()
+        run: |
+          python3 pruebas-jmeter/validate_report.py \
+            --jtl pruebas-jmeter/output/results.jtl \
+            --summary pruebas-jmeter/output/performance-summary.json \
+            --expected-requests 20 \
+            --max-p95-ms 300
+
+      - name: Publicar artifacts JMeter PR
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jmeter-pr-light-pr-${{ env.EVALUATED_PR }}-${{ env.EVALUATED_SHA }}
+          path: |
+            pruebas-jmeter/output/results.jtl
+            pruebas-jmeter/output/html-report/
+            pruebas-jmeter/output/performance-summary.json
+          retention-days: 14
+          if-no-files-found: warn
+
+      - name: Limpiar contenedores y volúmenes
+        if: always()
+        run: docker compose down -v --remove-orphans || true
