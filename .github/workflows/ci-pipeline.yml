@@ -211,6 +211,15 @@ jobs:
           path: pruebas-selenium/target/surefire-reports/*.xml
           reporter: java-junit
 
+      - name: Subir reportes JUnit de Selenium
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selenium-junit-reports
+          path: pruebas-selenium/target/surefire-reports/*.xml
+          retention-days: 7
+          if-no-files-found: ignore
+
       - name: Subir logs si falla
         if: failure()
         uses: actions/upload-artifact@v4
@@ -367,194 +376,236 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   summary-report:
-      name: Resumen Consolidado
-      runs-on: ubuntu-latest
-      needs:
-        - changes
-        - sonar-backend
-        - sonar-frontend
-        - selenium
-        - owasp-zap
-        - jmeter-pr
-      if: always() && github.event_name == 'pull_request'
+    name: Resumen Consolidado
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - sonar-backend
+      - sonar-frontend
+      - selenium
+      - owasp-zap
+      - jmeter-pr
+    if: always() && github.event_name == 'pull_request'
 
-      permissions:
-        contents: read
-        actions: read
+    permissions:
+      contents: read
+      actions: read
 
-      steps:
-        - name: Configurar Python 3.12
-          uses: actions/setup-python@v5
-          with:
-            python-version: '3.12'
+    steps:
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
-        - name: Descargar artifacts generados en el run
-          uses: actions/download-artifact@v4
-          with:
-            path: consolidated-artifacts
-          continue-on-error: true
+      - name: Descargar artifacts generados en el run
+        uses: actions/download-artifact@v4
+        with:
+          path: consolidated-artifacts
+        continue-on-error: true
 
-        - name: Generar tabla y gráficos en Summary
-          env:
-            RES_SONAR_BACK: ${{ needs.sonar-backend.result }}
-            RES_SONAR_FRONT: ${{ needs.sonar-frontend.result }}
-            RES_SELENIUM: ${{ needs.selenium.result }}
-            RES_ZAP: ${{ needs.owasp-zap.result }}
-            RES_JMETER: ${{ needs.jmeter-pr.result }}
-          run: |
-            python3 - << 'EOF'
-            import json
-            import os
-            import re
-            from pathlib import Path
-
-
-            def parse_sonar_md(path: Path) -> dict:
-                text = path.read_text(encoding="utf-8")
-                project_m = re.search(r"Project Key:\s*(.+)", text)
-                status_m = re.search(r"Status:\s*(.+)", text)
-                bugs_m = re.search(r"\|Bugs\|(\d+)\|", text)
-                vuln_m = re.search(r"\|Vulnerabilities\|(\d+)\|", text)
-                smells_m = re.search(r"\|Code_smells\|(\d+)\|", text)
-                return {
-                    "project": project_m.group(1).strip() if project_m else "",
-                    "status": status_m.group(1).strip() if status_m else "OK",
-                    "bugs": int(bugs_m.group(1)) if bugs_m else 0,
-                    "vulnerabilities": int(vuln_m.group(1)) if vuln_m else 0,
-                    "code_smells": int(smells_m.group(1)) if smells_m else 0,
-                }
+      - name: Generar tabla y gráficos en Summary
+        env:
+          RES_SONAR_BACK: ${{ needs.sonar-backend.result }}
+          RES_SONAR_FRONT: ${{ needs.sonar-frontend.result }}
+          RES_SELENIUM: ${{ needs.selenium.result }}
+          RES_ZAP: ${{ needs.owasp-zap.result }}
+          RES_JMETER: ${{ needs.jmeter-pr.result }}
+        run: |
+          python3 - << 'EOF'
+          import json
+          import os
+          import re
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
 
 
-            def parse_zap_json(path: Path) -> dict:
-                data = json.loads(path.read_text(encoding="utf-8"))
-                counts = {"High": 0, "Medium": 0, "Low": 0, "Informational": 0}
-                for site in data.get("site", []):
-                    for alert in site.get("alerts", []):
-                        risk = alert.get("riskdesc", "").split(" ")[0]
-                        if risk in counts:
-                            counts[risk] += 1
-                return counts
+          def parse_sonar_md(path: Path) -> dict:
+              text = path.read_text(encoding="utf-8")
+              project_m = re.search(r"Project Key:\s*(.+)", text)
+              status_m = re.search(r"Status:\s*(.+)", text)
+              bugs_m = re.search(r"\|Bugs\|(\d+)\|", text)
+              vuln_m = re.search(r"\|Vulnerabilities\|(\d+)\|", text)
+              smells_m = re.search(r"\|Code_smells\|(\d+)\|", text)
+              return {
+                  "project": project_m.group(1).strip() if project_m else "",
+                  "status": status_m.group(1).strip() if status_m else "OK",
+                  "bugs": int(bugs_m.group(1)) if bugs_m else 0,
+                  "vulnerabilities": int(vuln_m.group(1)) if vuln_m else 0,
+                  "code_smells": int(smells_m.group(1)) if smells_m else 0,
+              }
 
 
-            def main() -> None:
-                summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
-                if not summary_file:
-                    return
-
-                base = Path("consolidated-artifacts")
-                sonar_reports = {}
-                for md in base.rglob("analysis_report.md"):
-                    parsed = parse_sonar_md(md)
-                    sonar_reports[parsed["project"]] = parsed
-
-                lines = [
-                    "## Resumen Consolidado — Calidad, Seguridad y Rendimiento",
-                    "",
-                    "| Herramienta / Etapa | Estado | Métricas y Detalles |",
-                    "| :--- | :--- | :--- |",
-                ]
-
-                # 1. SonarQube Backend
-                sb = sonar_reports.get("cuidarteplus-backend")
-                if sb:
-                    lines.append(
-                        f"| SonarQube Backend (SAST) | `{sb['status']}` | "
-                        f"Bugs: **{sb['bugs']}** · Vulnerabilidades: **{sb['vulnerabilities']}** · Code Smells: **{sb['code_smells']}** |"
-                    )
-                else:
-                    lines.append(f"| SonarQube Backend (SAST) | `{os.environ.get('RES_SONAR_BACK', 'skipped')}` | Sin cambios en Backend |")
-
-                # 2. SonarQube Frontend
-                sf = sonar_reports.get("cuidarteplus-frontend")
-                if sf:
-                    lines.append(
-                        f"| SonarQube Frontend (SAST) | `{sf['status']}` | "
-                        f"Bugs: **{sf['bugs']}** · Vulnerabilidades: **{sf['vulnerabilities']}** · Code Smells: **{sf['code_smells']}** |"
-                    )
-                else:
-                    lines.append(f"| SonarQube Frontend (SAST) | `{os.environ.get('RES_SONAR_FRONT', 'skipped')}` | Sin cambios en Frontend |")
-
-                # 3. Selenium E2E
-                res_sel = os.environ.get("RES_SELENIUM", "skipped")
-                sel_detail = "Suites ejecutadas (detalle completo en la pestaña **Tests**)" if res_sel == "success" else f"Estado job: {res_sel}"
-                lines.append(f"| Pruebas Funcionales (Selenium) | `{res_sel.upper()}` | {sel_detail} |")
-
-                # 4. OWASP ZAP DAST
-                zap_json = next((p for p in base.rglob("*.json") if "zap" in str(p).lower()), None)
-                zc = parse_zap_json(zap_json) if zap_json else None
-                if zc:
-                    lines.append(
-                        f"| Seguridad Pasiva (OWASP ZAP) | `{os.environ.get('RES_ZAP', 'success').upper()}` | "
-                        f"High: **{zc['High']}** · Medium: **{zc['Medium']}** · Low: **{zc['Low']}** · Info: **{zc['Informational']}** |"
-                    )
-                else:
-                    lines.append(f"| Seguridad Pasiva (OWASP ZAP) | `{os.environ.get('RES_ZAP', 'skipped').upper()}` | Sin ejecución en este PR |")
-
-                # 5. JMeter Performance
-                jm_json = next(base.rglob("performance-summary.json"), None)
-                jm = json.loads(jm_json.read_text(encoding="utf-8")) if jm_json else None
-                if jm:
-                    jm_status = "PASS" if jm.get("passed") else "FAIL"
-                    lines.append(
-                        f"| Rendimiento API (JMeter Light) | `{jm_status}` | "
-                        f"Req: **{jm.get('total_requests', 0)}** · Fallos: **{jm.get('failed_requests', 0)}** · "
-                        f"Avg: **{jm.get('latency_avg_ms', 0)} ms** · p50: **{jm.get('latency_p50_ms', 0)} ms** · p95: **{jm.get('latency_p95_ms', 0)} ms** |"
-                    )
-                else:
-                    lines.append(f"| Rendimiento API (JMeter Light) | `{os.environ.get('RES_JMETER', 'skipped').upper()}` | Sin ejecución en este PR |")
-
-                lines.append("")
-
-                # Gráfico 1: Latencias JMeter (Barras XY)
-                if jm:
-                    avg_v = float(jm.get("latency_avg_ms", 0))
-                    p50_v = float(jm.get("latency_p50_ms", 0))
-                    p95_v = float(jm.get("latency_p95_ms", 0))
-                    y_max = max(10, int(max(avg_v, p50_v, p95_v) * 1.4) + 1)
-                    lines.extend([
-                        "### Tiempos de Respuesta API — JMeter Light (SLA < 300 ms)",
-                        "```mermaid",
-                        "xychart-beta",
-                        '    title "Latencia HTTP en milisegundos"',
-                        '    x-axis ["Promedio", "Mediana (p50)", "Percentil 95 (p95)"]',
-                        f'    y-axis "ms" 0 --> {y_max}',
-                        f"    bar [{avg_v}, {p50_v}, {p95_v}]",
-                        "```",
-                        "",
-                    ])
-
-                # Gráfico 2: Distribución de Code Smells SonarQube (Circular)
-                smells_back = sb["code_smells"] if sb else 0
-                smells_front = sf["code_smells"] if sf else 0
-                if (smells_back + smells_front) > 0:
-                    lines.extend([
-                        "### Distribución de Code Smells — SonarQube (SAST)",
-                        "```mermaid",
-                        "pie showData",
-                        '    title "Code Smells detectados por componente"',
-                        f'    "Backend" : {smells_back}',
-                        f'    "Frontend" : {smells_front}',
-                        "```",
-                        "",
-                    ])
-
-                # Gráfico 3: Hallazgos OWASP ZAP por Severidad (Circular)
-                if zc and sum(zc.values()) > 0:
-                    lines.extend([
-                        "### Alertas de Seguridad Pasiva — OWASP ZAP (DAST)",
-                        "```mermaid",
-                        "pie showData",
-                        '    title "Alertas por nivel de riesgo"',
-                    ])
-                    for level in ("High", "Medium", "Low", "Informational"):
-                        if zc[level] > 0:
-                            lines.append(f'    "{level}" : {zc[level]}')
-                    lines.extend(["```", ""])
-
-                with open(summary_file, "a", encoding="utf-8") as handle:
-                    handle.write("\n".join(lines))
+          def parse_junit_xmls(xml_files: list[Path]) -> dict:
+              totals = {"tests": 0, "passed": 0, "failures": 0, "errors": 0, "skipped": 0}
+              for xml_path in xml_files:
+                  root = ET.parse(xml_path).getroot()
+                  suites = [root] if root.tag == "testsuite" else list(root.findall("testsuite"))
+                  for suite in suites:
+                      tests = int(suite.attrib.get("tests", 0))
+                      failures = int(suite.attrib.get("failures", 0))
+                      errors = int(suite.attrib.get("errors", 0))
+                      skipped = int(suite.attrib.get("skipped", 0))
+                      passed = max(0, tests - failures - errors - skipped)
+                      totals["tests"] += tests
+                      totals["passed"] += passed
+                      totals["failures"] += failures
+                      totals["errors"] += errors
+                      totals["skipped"] += skipped
+              return totals
 
 
-            if __name__ == "__main__":
-                main()
-            EOF
+          def parse_zap_json(path: Path) -> dict:
+              data = json.loads(path.read_text(encoding="utf-8"))
+              counts = {"High": 0, "Medium": 0, "Low": 0, "Informational": 0}
+              for site in data.get("site", []):
+                  for alert in site.get("alerts", []):
+                      risk = alert.get("riskdesc", "").split(" ")[0]
+                      if risk in counts:
+                          counts[risk] += 1
+              return counts
+
+
+          def main() -> None:
+              summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
+              if not summary_file:
+                  return
+
+              base = Path("consolidated-artifacts")
+              sonar_reports = {}
+              for md in base.rglob("analysis_report.md"):
+                  parsed = parse_sonar_md(md)
+                  sonar_reports[parsed["project"]] = parsed
+
+              junit_files = [
+                  p for p in base.rglob("*.xml")
+                  if p.name.startswith("TEST-") or "surefire" in str(p).lower()
+              ]
+              junit_stats = parse_junit_xmls(junit_files) if junit_files else None
+
+              zap_json = next((p for p in base.rglob("*.json") if "zap" in str(p).lower()), None)
+              zc = parse_zap_json(zap_json) if zap_json else None
+
+              jm_json = next(base.rglob("performance-summary.json"), None)
+              jm = json.loads(jm_json.read_text(encoding="utf-8")) if jm_json else None
+
+              lines = [
+                  "## Resumen Consolidado — Calidad, Seguridad y Rendimiento",
+                  "",
+                  "| Herramienta / Etapa | Estado | Métricas y Detalles |",
+                  "| :--- | :--- | :--- |",
+              ]
+
+              sb = sonar_reports.get("cuidarteplus-backend")
+              if sb:
+                  lines.append(
+                      f"| SonarQube Backend (SAST) | `{sb['status']}` | "
+                      f"Bugs: **{sb['bugs']}** · Vulnerabilidades: **{sb['vulnerabilities']}** · Code Smells: **{sb['code_smells']}** |"
+                  )
+              else:
+                  lines.append(f"| SonarQube Backend (SAST) | `{os.environ.get('RES_SONAR_BACK', 'skipped')}` | Sin cambios en Backend |")
+
+              sf = sonar_reports.get("cuidarteplus-frontend")
+              if sf:
+                  lines.append(
+                      f"| SonarQube Frontend (SAST) | `{sf['status']}` | "
+                      f"Bugs: **{sf['bugs']}** · Vulnerabilidades: **{sf['vulnerabilities']}** · Code Smells: **{sf['code_smells']}** |"
+                  )
+              else:
+                  lines.append(f"| SonarQube Frontend (SAST) | `{os.environ.get('RES_SONAR_FRONT', 'skipped')}` | Sin cambios en Frontend |")
+
+              res_sel = os.environ.get("RES_SELENIUM", "skipped")
+              if junit_stats:
+                  failed_total = junit_stats["failures"] + junit_stats["errors"]
+                  lines.append(
+                      f"| Pruebas Funcionales (Selenium + JUnit) | `{res_sel.upper()}` | "
+                      f"Total: **{junit_stats['tests']}** · Pasaron: **{junit_stats['passed']}** · "
+                      f"Fallaron: **{failed_total}** · Omitidas: **{junit_stats['skipped']}** |"
+                  )
+              else:
+                  sel_detail = "Suites ejecutadas (ver pestaña **Tests**)" if res_sel == "success" else f"Estado job: {res_sel}"
+                  lines.append(f"| Pruebas Funcionales (Selenium + JUnit) | `{res_sel.upper()}` | {sel_detail} |")
+
+              if zc:
+                  lines.append(
+                      f"| Seguridad Pasiva (OWASP ZAP) | `{os.environ.get('RES_ZAP', 'success').upper()}` | "
+                      f"High: **{zc['High']}** · Medium: **{zc['Medium']}** · Low: **{zc['Low']}** · Info: **{zc['Informational']}** |"
+                  )
+              else:
+                  lines.append(f"| Seguridad Pasiva (OWASP ZAP) | `{os.environ.get('RES_ZAP', 'skipped').upper()}` | Sin ejecución en este PR |")
+
+              if jm:
+                  jm_status = "PASS" if jm.get("passed") else "FAIL"
+                  lines.append(
+                      f"| Rendimiento API (JMeter Light) | `{jm_status}` | "
+                      f"Req: **{jm.get('total_requests', 0)}** · Fallos: **{jm.get('failed_requests', 0)}** · "
+                      f"Avg: **{jm.get('latency_avg_ms', 0)} ms** · p50: **{jm.get('latency_p50_ms', 0)} ms** · p95: **{jm.get('latency_p95_ms', 0)} ms** |"
+                  )
+              else:
+                  lines.append(f"| Rendimiento API (JMeter Light) | `{os.environ.get('RES_JMETER', 'skipped').upper()}` | Sin ejecución en este PR |")
+
+              lines.append("")
+
+              if junit_stats and junit_stats["tests"] > 0:
+                  failed_total = junit_stats["failures"] + junit_stats["errors"]
+                  lines.extend([
+                      "### Resultados de Pruebas Funcionales — Selenium + JUnit",
+                      "```mermaid",
+                      "pie showData",
+                      '    title "Casos de prueba JUnit por estado"',
+                      f'    "Pasaron" : {junit_stats["passed"]}',
+                      f'    "Fallaron" : {failed_total}',
+                      f'    "Omitidas" : {junit_stats["skipped"]}',
+                      "```",
+                      "",
+                  ])
+
+              if jm:
+                  avg_v = float(jm.get("latency_avg_ms", 0))
+                  p50_v = float(jm.get("latency_p50_ms", 0))
+                  p95_v = float(jm.get("latency_p95_ms", 0))
+                  y_max = max(10, int(max(avg_v, p50_v, p95_v) * 1.4) + 1)
+                  lines.extend([
+                      "### Tiempos de Respuesta API — JMeter Light (SLA < 300 ms)",
+                      "```mermaid",
+                      "xychart-beta",
+                      '    title "Latencia HTTP en milisegundos"',
+                      '    x-axis ["Promedio", "Mediana (p50)", "Percentil 95 (p95)"]',
+                      f'    y-axis "ms" 0 --> {y_max}',
+                      f"    bar [{avg_v}, {p50_v}, {p95_v}]",
+                      "```",
+                      "",
+                  ])
+
+              smells_back = sb["code_smells"] if sb else 0
+              smells_front = sf["code_smells"] if sf else 0
+              if (smells_back + smells_front) > 0:
+                  lines.extend([
+                      "### Distribución de Code Smells — SonarQube (SAST)",
+                      "```mermaid",
+                      "pie showData",
+                      '    title "Code Smells detectados por componente"',
+                      f'    "Backend" : {smells_back}',
+                      f'    "Frontend" : {smells_front}',
+                      "```",
+                      "",
+                  ])
+
+              if zc and sum(zc.values()) > 0:
+                  lines.extend([
+                      "### Alertas de Seguridad Pasiva — OWASP ZAP (DAST)",
+                      "```mermaid",
+                      "pie showData",
+                      '    title "Alertas por nivel de riesgo"',
+                  ])
+                  for level in ("High", "Medium", "Low", "Informational"):
+                      if zc[level] > 0:
+                          lines.append(f'    "{level}" : {zc[level]}')
+                  lines.extend(["```", ""])
+
+              with open(summary_file, "a", encoding="utf-8") as handle:
+                  handle.write("\n".join(lines))
+
+
+          if __name__ == "__main__":
+              main()
+          EOF

@@ -1,4 +1,4 @@
-# cuidarteplus  
+# cuidarteplus   
 
 API en Node.js (Express) con PostgreSQL. Intencionalmente vulnerable para fines académicos.
 
