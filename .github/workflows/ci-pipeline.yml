@@ -366,7 +366,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-  summary-report:
+summary-report:
     name: Resumen Consolidado
     runs-on: ubuntu-latest
     needs:
@@ -394,7 +394,7 @@ jobs:
           path: consolidated-artifacts
         continue-on-error: true
 
-      - name: Generar tabla unificada en Summary
+      - name: Generar tabla y gráficos en Summary
         env:
           RES_SONAR_BACK: ${{ needs.sonar-backend.result }}
           RES_SONAR_FRONT: ${{ needs.sonar-frontend.result }}
@@ -419,9 +419,9 @@ jobs:
               return {
                   "project": project_m.group(1).strip() if project_m else "",
                   "status": status_m.group(1).strip() if status_m else "OK",
-                  "bugs": bugs_m.group(1) if bugs_m else "0",
-                  "vulnerabilities": vuln_m.group(1) if vuln_m else "0",
-                  "code_smells": smells_m.group(1) if smells_m else "0",
+                  "bugs": int(bugs_m.group(1)) if bugs_m else 0,
+                  "vulnerabilities": int(vuln_m.group(1)) if vuln_m else 0,
+                  "code_smells": int(smells_m.group(1)) if smells_m else 0,
               }
 
 
@@ -481,8 +481,8 @@ jobs:
 
               # 4. OWASP ZAP DAST
               zap_json = next((p for p in base.rglob("*.json") if "zap" in str(p).lower()), None)
-              if zap_json:
-                  zc = parse_zap_json(zap_json)
+              zc = parse_zap_json(zap_json) if zap_json else None
+              if zc:
                   lines.append(
                       f"| Seguridad Pasiva (OWASP ZAP) | `{os.environ.get('RES_ZAP', 'success').upper()}` | "
                       f"High: **{zc['High']}** · Medium: **{zc['Medium']}** · Low: **{zc['Low']}** · Info: **{zc['Informational']}** |"
@@ -492,8 +492,8 @@ jobs:
 
               # 5. JMeter Performance
               jm_json = next(base.rglob("performance-summary.json"), None)
-              if jm_json:
-                  jm = json.loads(jm_json.read_text(encoding="utf-8"))
+              jm = json.loads(jm_json.read_text(encoding="utf-8")) if jm_json else None
+              if jm:
                   jm_status = "PASS" if jm.get("passed") else "FAIL"
                   lines.append(
                       f"| Rendimiento API (JMeter Light) | `{jm_status}` | "
@@ -504,6 +504,53 @@ jobs:
                   lines.append(f"| Rendimiento API (JMeter Light) | `{os.environ.get('RES_JMETER', 'skipped').upper()}` | Sin ejecución en este PR |")
 
               lines.append("")
+
+              # Gráfico 1: Latencias JMeter (Barras XY)
+              if jm:
+                  avg_v = float(jm.get("latency_avg_ms", 0))
+                  p50_v = float(jm.get("latency_p50_ms", 0))
+                  p95_v = float(jm.get("latency_p95_ms", 0))
+                  y_max = max(10, int(max(avg_v, p50_v, p95_v) * 1.4) + 1)
+                  lines.extend([
+                      "### Tiempos de Respuesta API — JMeter Light (SLA < 300 ms)",
+                      "```mermaid",
+                      "xychart-beta",
+                      '    title "Latencia HTTP en milisegundos"',
+                      '    x-axis ["Promedio", "Mediana (p50)", "Percentil 95 (p95)"]',
+                      f'    y-axis "ms" 0 --> {y_max}',
+                      f"    bar [{avg_v}, {p50_v}, {p95_v}]",
+                      "```",
+                      "",
+                  ])
+
+              # Gráfico 2: Distribución de Code Smells SonarQube (Circular)
+              smells_back = sb["code_smells"] if sb else 0
+              smells_front = sf["code_smells"] if sf else 0
+              if (smells_back + smells_front) > 0:
+                  lines.extend([
+                      "### Distribución de Code Smells — SonarQube (SAST)",
+                      "```mermaid",
+                      "pie showData",
+                      '    title "Code Smells detectados por componente"',
+                      f'    "Backend" : {smells_back}',
+                      f'    "Frontend" : {smells_front}',
+                      "```",
+                      "",
+                  ])
+
+              # Gráfico 3: Hallazgos OWASP ZAP por Severidad (Circular)
+              if zc and sum(zc.values()) > 0:
+                  lines.extend([
+                      "### Alertas de Seguridad Pasiva — OWASP ZAP (DAST)",
+                      "```mermaid",
+                      "pie showData",
+                      '    title "Alertas por nivel de riesgo"',
+                  ])
+                  for level in ("High", "Medium", "Low", "Informational"):
+                      if zc[level] > 0:
+                          lines.append(f'    "{level}" : {zc[level]}')
+                  lines.extend(["```", ""])
+
               with open(summary_file, "a", encoding="utf-8") as handle:
                   handle.write("\n".join(lines))
 
