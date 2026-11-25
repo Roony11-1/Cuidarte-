@@ -28,10 +28,13 @@ class OpenApiRouteResolver:
         with urllib.request.urlopen(self.openapi_url, timeout=self.timeout) as response:
             spec = json.loads(response.read().decode("utf-8"))
 
-        paths = list(spec.get("paths", {}).keys())
-        auth_prefix = self._match_prefix(paths, suffix="/login", keyword="auth")
-        pacientes_prefix = self._match_prefix(paths, suffix="/buscar/rut/{rut}", keyword="paciente")
-        tipo_examen_prefix = self._find_collection_path(paths, keywords=("tipo", "examen"))
+        return self.resolve_from_paths(list(spec.get("paths", {}).keys()))
+
+    @classmethod
+    def resolve_from_paths(cls, paths: list[str]) -> ApiPrefixes:
+        auth_prefix = cls._match_prefix(paths, suffix="/login", keywords=("autenticacion", "auth"))
+        pacientes_prefix = cls._find_collection_path(paths, keywords=("paciente",))
+        tipo_examen_prefix = cls._find_collection_path(paths, keywords=("tipo", "examen"))
 
         missing = [
             name
@@ -54,9 +57,9 @@ class OpenApiRouteResolver:
         )
 
     @staticmethod
-    def _match_prefix(paths: list[str], suffix: str, keyword: str) -> str:
+    def _match_prefix(paths: list[str], suffix: str, keywords: tuple[str, ...]) -> str:
         for path in paths:
-            if path.endswith(suffix) and keyword in path:
+            if path.endswith(suffix) and any(kw in path for kw in keywords):
                 return path[: -len(suffix)] if suffix else path
         return ""
 
